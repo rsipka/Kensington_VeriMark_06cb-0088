@@ -193,9 +193,18 @@ rm -rf "$SRC/libfprint/drivers/validity-0088"
 mkdir -p "$SRC/libfprint/drivers/validity-0088"
 cp -p "$DRIVER"/*.c "$DRIVER"/*.h "$SRC/libfprint/drivers/validity-0088/"
 
-python3 - "$SRC" <<'PYEOF'
+# GObject introspection < 1.70 does not know the (getter) annotation that
+# libfprint uses, and libfprint makes introspection warnings fatal (seen on
+# Rocky/RHEL 9 with 1.68). There, make them non-fatal again.
+GI_OLD=0
+if [ "$(printf '%s\n%s\n' 1.70 "$(pkg-config --modversion gobject-introspection-1.0)" | sort -V | head -1)" != 1.70 ]; then
+    GI_OLD=1
+fi
+
+python3 - "$SRC" "$GI_OLD" <<'PYEOF'
 import glob, os, re, sys
 src = sys.argv[1]
+gi_old = sys.argv[2] == '1'
 
 files = sorted(os.path.basename(f) for f in glob.glob(
     os.path.join(src, 'libfprint/drivers/validity-0088/*.c')))
@@ -206,7 +215,11 @@ if not m:
     sys.exit('libfprint/meson.build: driver_sources not found')
 entry = "    'validity_0088' : files(\n" + ''.join(
     "        'drivers/validity-0088/%s',\n" % f for f in files) + "    ),\n"
-open(inner, 'w').write(s[:m.end()] + entry + s[m.end():])
+s = s[:m.end()] + entry + s[m.end():]
+if gi_old and 'fatal_warnings: true' in s:
+    s = s.replace('fatal_warnings: true', 'fatal_warnings: false')
+    print('build-libfprint: old gobject-introspection: introspection warnings made non-fatal')
+open(inner, 'w').write(s)
 
 outer = os.path.join(src, 'meson.build')
 s = open(outer).read()

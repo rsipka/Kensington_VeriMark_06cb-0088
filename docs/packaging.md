@@ -35,7 +35,11 @@ Run as a normal user (sudo is only used with `--install-deps`).
    resets libfprint's two meson files and registers the driver: all `.c`
    files in `driver_sources` of `libfprint/meson.build`, and the OpenSSL
    helper in the root `meson.build` — `drivers_info` (libfprint ≥ 1.94.100)
-   or `driver_helper_mapping` (older).
+   or `driver_helper_mapping` (older). With GObject introspection older than
+   1.70 (e.g. Rocky/RHEL 9: 1.68), which does not know the `(getter)`
+   annotation libfprint uses, it also makes libfprint's introspection
+   warnings non-fatal (`fatal_warnings: false`); otherwise libfprint itself
+   does not build there.
 4. **Build** into `build/libfprint/builddir` with
    `-Ddrivers=validity_0088 -Ddoc=false -Dgtk-examples=false -Dinstalled-tests=false -Dudev_rules=disabled -Dudev_hwdb=disabled`,
    and check that the library contains the driver. The build directory is
