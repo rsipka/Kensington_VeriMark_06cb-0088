@@ -69,8 +69,10 @@ fprintd-verify "$USER"                              # check it still works
 sudo packaging/setup-fprintd.sh --drop-file-key     # then remove the plain key file
 ```
 
-The TPM itself is not modified, so a dual-boot Windows (BitLocker included) is
-not affected. More options (`--status`, `--encryption-off`, …):
+A small service, `validity0088-print-key`, decrypts the key for fprintd at
+boot; if the TPM is ever cleared, only that service fails and fprintd keeps
+running. The TPM itself is not modified, so a dual-boot Windows (BitLocker
+included) is not affected. More options (`--status`, `--encryption-off`, …):
 [docs/packaging.md](docs/packaging.md#setup-fprintdsh).
 
 **Updating:** `git pull`, `packaging/build-libfprint.sh`, then
@@ -102,7 +104,7 @@ Start with the log: `journalctl -u fprintd -n 50`.
 | "device did not return an image" | The tap was too short or too light; tap again. |
 | A finger matches only in some placements | Enroll it again with more varied placement. |
 | Many failed scans, low scores (e.g. after moving the key to another computer) | Recalibrate: delete `/var/lib/fprint/validity-0088-pairing/calibration.bin` (as root) and restart fprintd; the next scan calibrates (finger off). |
-| Encrypted prints stop verifying, `--status` says the credential "CANNOT be decrypted" | The TPM was probably cleared; `journalctl -u validity0088-print-key` shows the failure. Those prints are lost; recovery steps in [docs/print-encryption.md](docs/print-encryption.md#recovery). (Setups from before the helper unit: fprintd does not start, `243/CREDENTIALS`; run `--encrypt-prints` again to switch.) |
+| Encrypted prints stop verifying, `--status` says the credential "CANNOT be decrypted" | The TPM was probably cleared; `journalctl -u validity0088-print-key` shows the failure. Those prints are lost; recovery steps in [docs/print-encryption.md](docs/print-encryption.md#recovery). (Setups from before the helper unit: fprintd itself does not start, `243/CREDENTIALS`; same recovery.) |
 | "Stored print is encrypted with key …, which is not available" | Its key is gone (deleted, other computer). Restore the key from a backup, or delete the print and enroll again. |
 | Prints from a much older version (NBIS era) do not verify | `fprintd-delete "$USER"` and enroll again. |
 

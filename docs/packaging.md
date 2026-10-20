@@ -133,7 +133,7 @@ BindReadOnlyPaths=/path/to/libfprint/builddir/libfprint:/run/libfprint-validity-
 
 then `sudo systemctl daemon-reload && sudo systemctl restart fprintd`. For print
 encryption with a systemd credential, use the script: it also writes the
-matching drop-ins.
+key drop-in and the helper unit `validity0088-print-key.service`.
 
 ### Why it is done this way
 
