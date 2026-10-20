@@ -25,7 +25,7 @@ jobs:
     name: Lint
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: shellcheck
         run: shellcheck -S warning packaging/*.sh tests/*.sh .github/ci/*.sh
       - name: Repository rules
@@ -62,7 +62,7 @@ jobs:
         run: |
           if command -v apt-get >/dev/null; then apt-get update -q && apt-get install -y -q git ca-certificates; \
           else dnf install -y -q git; fi
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Base packages
         run: .github/ci/prepare-container.sh
       - name: Build libfprint with the driver
@@ -81,7 +81,7 @@ jobs:
         run: tests/run.sh
       - name: Logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: logs-${{ strategy.job-index }}
           path: |
