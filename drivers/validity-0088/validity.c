@@ -2011,7 +2011,8 @@ enroll_read_image_cb (FpDevice     *device,
   GError *err = NULL;
   FpImage *image;
 
-  if (plain_len != VALIDITY_IMAGE_RECORD_LEN)
+  if (plain_len != VALIDITY_IMAGE_RECORD_LEN ||
+      (plain[0] | (plain[1] << 8)) != 0)
     {
       g_autofree gchar *hex = validity_hex_prefix (plain, plain_len, 32);
       g_autoptr(GError) retry = g_error_new (FP_DEVICE_RETRY,
@@ -2098,8 +2099,10 @@ validity_enroll_run_state (FpiSsm   *ssm,
         gsize cmd_len;
         g_autofree guint8 *cmd =
             validity_build_enroll_read_image_command (0x2000, &cmd_len);
+        /* check_status=FALSE: a bad scan answers 0x51 with non-zero status
+         * (0x0007); enroll_read_image_cb() turns that into a retry. */
         validity_ssm_exchange (ssm, device, "enroll-read-image",
-                               cmd, cmd_len, TRUE,
+                               cmd, cmd_len, FALSE,
                                enroll_read_image_cb, NULL);
       }
       break;
