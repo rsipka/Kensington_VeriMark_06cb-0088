@@ -181,8 +181,10 @@ depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
    7 × 3 mm sensor is hard even on purpose.
 3. Encrypt stored prints: implemented (driver format 2 + key file,
    `setup-fprintd.sh --encrypt-prints` / `--drop-file-key` with an
-   `ImportCredential=` credential, host+tpm2, no PCRs). Left: run it for
-   real with fprintd (enroll, verify, PAM login). Known limitation: an
+   `ImportCredential=` credential, host+tpm2, no PCRs, plus
+   `DeviceAllow=/dev/tpmrm0 rw`). Tested 2026-10-20 with fprintd: enroll,
+   verify, `--drop-file-key`, verify with the credential only. Not yet
+   checked: PAM login with an encrypted print. Known limitation: an
    undecryptable credential (TPM cleared) stops fprintd from starting
    (exit 243); a helper-unit rework is described in
    `docs/print-encryption.md`.
