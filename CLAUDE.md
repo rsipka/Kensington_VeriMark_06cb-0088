@@ -150,6 +150,14 @@ depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
 
 1. Field-test SIFT threshold; measure false accepts with more fingers/people.
 2. More enroll stages (10 → 15–20) and/or placement prompts for coverage.
+   Findings (2026-10-20): fprintd maps enroll retries to fixed statuses
+   (`enroll-finger-not-centered`, `enroll-retry-scan`, …), so a driver cannot
+   show placement prompts there; its message text only reaches libfprint's
+   examples and logs. Between taps of one enrollment, taps on the same spot
+   scored 130–180, varied taps mostly below 125 (often 0–30). A "too similar"
+   gate (reject ≥130, at most 2 in a row) was tried and dropped: two real
+   enrollments never triggered it, and repeating a placement exactly on the
+   7 × 3 mm sensor is hard even on purpose.
 3. Encrypt stored prints (AES-256-GCM, key via `systemd-creds`/TPM,
    `LoadCredentialEncrypted=` in the fprintd drop-in; fallback root-only key
    file); keep reading unencrypted prints.
