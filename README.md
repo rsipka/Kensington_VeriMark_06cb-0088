@@ -1,5 +1,9 @@
 # Kensington VeriMark (06cb:0088) Linux Driver
 
+[![CI](https://github.com/rsipka/Kensington_VeriMark_06cb-0088/actions/workflows/ci.yml/badge.svg)](https://github.com/rsipka/Kensington_VeriMark_06cb-0088/actions/workflows/ci.yml)
+
+Built and tested on Ubuntu 24.04, Debian 12 and 13, Fedora 42 and Rocky Linux 9 and 10 against the latest libfprint release ([CI](docs/testing.md#continuous-integration)).
+
 An open-source `libfprint` driver for the Kensington VeriMark fingerprint key.
 
 Technical documentation (protocol, calibration, matcher, encryption, evaluation, packaging, tests): [docs/](docs/README.md). Tests without a device: `tests/run.sh` (see [docs/testing.md](docs/testing.md)).
