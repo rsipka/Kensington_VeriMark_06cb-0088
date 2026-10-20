@@ -154,7 +154,7 @@ depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
 | `VALIDITY0088_RECALIBRATE=1` | Recalibrate in the next session prep |
 | `VALIDITY0088_SIFT_THRESHOLD=n` | Match threshold (default 12) |
 | `VALIDITY0088_STORAGE_DIR=path` | Override storage directory |
-| `VALIDITY0088_PRINT_ENCRYPTION=0` | Store new prints unencrypted (format 1) |
+| `VALIDITY0088_PRINT_ENCRYPTION=0` | Store new prints unencrypted (format 1); set for fprintd by `setup-fprintd.sh --encryption-off` |
 | `VALIDITY0088_DUMP_SCANS=dir` | Save every accepted scan as `<time>-<action>-f<finger>.pgm` (biometric data; `*.pgm` is git-ignored) |
 | `VALIDITY0088_VERIFY_MODE=enroll` | Verify with capture mode 0x23 |
 | `VALIDITY0088_LED_RESULT=0` | No LED feedback after verify |

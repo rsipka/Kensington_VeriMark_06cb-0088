@@ -221,6 +221,15 @@ sudo packaging/setup-fprintd.sh --drop-file-key
 
 The credential is not bound to boot measurements (PCRs), so firmware or Secure Boot updates do not lock it; clearing the TPM does (see *Troubleshooting*). The TPM itself is not modified, so a dual-boot Windows (including BitLocker) is not affected.
 
+**Switching encryption on or off:**
+
+| Command | Effect |
+|---|---|
+| `sudo packaging/setup-fprintd.sh --status` | Shows the library in use, whether encryption is on, where the key is, and how many prints are encrypted. |
+| `sudo packaging/setup-fprintd.sh --encryption-off` | New prints are stored unencrypted. Already encrypted prints keep working as long as their key exists; enroll a finger again to store it unencrypted. |
+| `sudo packaging/setup-fprintd.sh --encryption-on` | New prints are encrypted again (the default). |
+| `sudo packaging/setup-fprintd.sh --delete-key` | Deletes the key (credential and key file) after asking for confirmation (`--yes` in scripts). **Encrypted prints become unreadable**: delete them and enroll again. Run `--encryption-off` first, or the next enrollment creates a new key. |
+
 Run it from a normal terminal: `sudo` does not work inside sandboxed shells (for example an AI assistant's shell) that set the "no new privileges" flag. The build directory may be behind a symlink (such as `~/Documents` pointing to another disk); the script resolves it. After rebuilding the library, `sudo systemctl restart fprintd` makes fprintd load the new build.
 
 **Manual path** — if you'd rather edit by hand, run:

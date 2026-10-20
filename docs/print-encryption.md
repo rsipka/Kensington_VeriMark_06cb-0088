@@ -117,7 +117,15 @@ credential is the real protection.
    the key.
 
 `--drop-file-key` then deletes the old `print-key` file, but only if the
-credential decrypts to exactly the same key. `--remove` removes the drop-ins
+credential decrypts to exactly the same key.
+
+Turning encryption off and on: `--encryption-off` writes a drop-in
+(`validity0088-encryption.conf`) with `VALIDITY0088_PRINT_ENCRYPTION=0`, so
+new prints are stored unencrypted; encrypted prints stay readable while
+their key exists. `--encryption-on` removes that drop-in. Only
+`--delete-key` (with confirmation) removes the key, and with it access to the
+encrypted prints. `--status` shows the configuration and counts encrypted
+and unencrypted prints of this driver in `/var/lib/fprint`. `--remove` removes the drop-ins
 and keeps the credential file, so removing them never makes prints
 unreadable.
 
