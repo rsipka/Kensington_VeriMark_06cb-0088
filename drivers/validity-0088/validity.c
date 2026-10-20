@@ -611,13 +611,13 @@ validity_get_image_scale (void)
   guint64 value;
 
   if (env == NULL || env[0] == '\0')
-    return 2;
+    return 1;
 
   value = g_ascii_strtoull (env, &end, 10);
   if (end == env || *end != '\0' || value == 0 || value > 4)
     {
       fp_warn ("ignoring invalid VALIDITY0088_IMAGE_SCALE=%s", env);
-      return 2;
+      return 1;
     }
 
   return (guint) value;
@@ -694,9 +694,16 @@ validity_image_from_plaintext (const guint8 *plain,
       return NULL;
     }
 
+  /* The header says 56 x 144, but the pixel stream is column-major: it is
+   * 56 columns of 144 samples each (read as 144-wide rows it shows clean,
+   * continuous ridges; read as 56-wide rows every line is scrambled). Build
+   * the 56 x 144 image by transposing so NBIS sees real ridges. */
   raw_image = fp_image_new (VALIDITY_IMAGE_WIDTH, VALIDITY_IMAGE_HEIGHT);
   raw_image->flags = validity_get_image_flags ();
-  memcpy (raw_image->data, record->pixels, VALIDITY_IMAGE_DATA_LEN);
+  for (guint x = 0; x < VALIDITY_IMAGE_WIDTH; x++)
+    for (guint y = 0; y < VALIDITY_IMAGE_HEIGHT; y++)
+      raw_image->data[y * VALIDITY_IMAGE_WIDTH + x] =
+          record->pixels[x * VALIDITY_IMAGE_HEIGHT + y];
 
   scale = validity_get_image_scale ();
   image = validity_scale_image_nearest (raw_image, scale);
