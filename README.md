@@ -2,6 +2,8 @@
 
 An open-source `libfprint` driver for the Kensington VeriMark fingerprint key.
 
+Technical documentation (protocol, calibration, matcher, encryption, evaluation, packaging): [docs/](docs/README.md).
+
 > **Install, plug in, works.**
 >
 > 1. `packaging/build-libfprint.sh` — fetches libfprint, adds the driver, builds it (section 2)
@@ -158,7 +160,7 @@ Every sensor needs its own calibration; the driver does it by itself. When no ca
 3. saves the result as `calibration.bin` in the storage directory (see below), and
 4. builds the capture program from it for every scan.
 
-Set `VALIDITY0088_RECALIBRATE=1` for one run to calibrate again (finger off). The capture program embedded in the source is only a generic skeleton with all sensor-specific parts blank, so scanning without a calibration is not possible: if calibration fails, enroll and verify fail with an error and calibration is retried on the next attempt.
+Set `VALIDITY0088_RECALIBRATE=1` for one run to calibrate again (finger off). Details: [docs/capture-program.md](docs/capture-program.md). The capture program embedded in the source is only a generic skeleton with all sensor-specific parts blank, so scanning without a calibration is not possible: if calibration fails, enroll and verify fail with an error and calibration is retried on the next attempt.
 
 ### Matching
 
@@ -167,6 +169,7 @@ The sensor window is too small for classic minutiae matching (a scan holds only 
 - **Score** = number of consistent keypoints. Match threshold: **12** (`VALIDITY0088_SIFT_THRESHOLD`). In a test with all 10 fingers of one person (1800 wrong-finger comparisons), wrong fingers never scored above 7; probes of the enrolled finger scored 46 in the median. At 12 there were no false accepts and 3 % false rejects, all from taps on finger areas the enrollment had not covered.
 - **Prints** store keypoints only (about 33 KB per tap, 10 taps per print), never fingerprint images, and are **encrypted** (AES-256-GCM) with a key kept in the storage directory (`print-key`, created at the first enrollment; no systemd needed; if it cannot be created, the print is stored unencrypted with a warning). Prints made by older versions of this driver (unencrypted, or storing raw scans) still verify; they stay unencrypted until the finger is enrolled again. Without the key, encrypted prints cannot be read: back it up together with the pairing data. Design and limits: [docs/print-encryption.md](docs/print-encryption.md).
 - **Identify** scores a scan against every enrolled print and reports the best one above the threshold. fprintd uses this for its duplicate check when you enroll.
+- **Details and test results:** [docs/matcher.md](docs/matcher.md), [docs/evaluation.md](docs/evaluation.md).
 - **Coverage matters:** a scan of a finger area that none of the enrolled taps covers scores like a different finger. Vary the placement while enrolling (centre, tip, left and right edge, lower part).
 - **Print updates:** the driver can extend an existing print instead of replacing it (libfprint's "update print" feature): a second enrollment of the same finger, ideally on another occasion, keeps the old taps and adds 10 new ones (up to 30 taps per print). This covers more of the finger and clearly reduces false rejects. Today only libfprint clients that ask for it use this, e.g. `examples/enroll` (answer `y` to "Should an existing fingerprint be updated…"). **fprintd (up to 1.94.5) always replaces the print** when you enroll a finger again.
 

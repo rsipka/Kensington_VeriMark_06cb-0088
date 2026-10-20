@@ -32,6 +32,9 @@ matching. No Windows driver data or tooling is needed at runtime.
   - `meson-fragment.txt` – lines to add to libfprint's meson files.
 - `packaging/build-libfprint.sh` – fetch libfprint, add the driver, build.
 - `packaging/setup-fprintd.sh` – fprintd systemd drop-in helper.
+- `docs/` – technical documentation (index: `docs/README.md`): architecture,
+  protocol, capture program and calibration, matcher, print encryption,
+  evaluation, packaging. Keep it in sync with behaviour changes.
 - `tools/scan-eval.c` – offline matcher evaluation on scans saved with
   `VALIDITY0088_DUMP_SCANS` (genuine/impostor scores, error rates per
   threshold); build line in the file header.
@@ -171,7 +174,8 @@ depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
 | `VALIDITY0088_VERIFY_MODE=enroll` | Verify with capture mode 0x23 |
 | `VALIDITY0088_LED_RESULT=0` | No LED feedback after verify |
 | `VALIDITY0088_NCC_THRESHOLD` | Obsolete (old correlation matcher) |
-| `VALIDITY0088_FORCE_REPAIR`, `_TRY_HARD_RESET`, `_SKIP_AUTO_PAIR`, `_RUN_FRESH_PAIR`, `_FLASH_*` | Pairing/recovery tools from upstream |
+| `VALIDITY0088_ENROLL_CAPTURE_CMD=path`, `_ENROLL_HOSTPART_CMD=path` | Debug: send a captured capture program / host part file as is |
+| `VALIDITY0088_FORCE_REPAIR`, `_TRY_HARD_RESET`, `_SKIP_AUTO_PAIR`, `_FLASH_LIVE`, `_FLASH_DRY_RUN`, `_FLASH_SIGNATURE_HEX` | Pairing/recovery tools from upstream |
 
 ## Rules for this repo
 

@@ -1660,8 +1660,8 @@ validity_open (FpDevice *device)
    * run the ceremony now to populate them. This covers:
    *   - already-paired devices opened from a wiped storage dir
    *   - users who set VALIDITY0088_FORCE_REPAIR above
-   * The failure-recovery direction (handshake fails -> ceremony -> retry)
-   * is still gated behind VALIDITY0088_RUN_FRESH_PAIR=1 below; this
+   * There is no automatic recovery when the handshake fails (open fails;
+   * VALIDITY0088_FORCE_REPAIR=1 forces a fresh pairing); this
    * backfill path is for the case where the device IS already paired
    * and we just need to repopulate local state. */
   if (!validity_pairing_state_complete ())
