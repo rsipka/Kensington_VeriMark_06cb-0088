@@ -90,10 +90,12 @@ sudo apt install meson ninja-build build-essential libglib2.0-dev \
          'drivers/validity-0088/validity-init-data.c',
          'drivers/validity-0088/validity-init-clean-slate.c',
          'drivers/validity-0088/validity-enroll-data.c',
+         'drivers/validity-0088/validity-match.c',
          'drivers/validity-0088/validity-pairing.c',
          'drivers/validity-0088/validity-pretls-pair.c',
          'drivers/validity-0088/validity-pubkeys.c',
-         'drivers/validity-0088/validity-sift.c' ],
+         'drivers/validity-0088/validity-sift.c',
+         'drivers/validity-0088/validity-transport.c' ],
    ```
 
    **(b)** Open `libfprint/meson.build` (the outer one, at the project root). Current libfprint lists drivers in the `drivers_info` dictionary (entries like `'uru4000': { 'helper': ['openssl'] },`). Add:

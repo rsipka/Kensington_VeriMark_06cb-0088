@@ -22,6 +22,11 @@ matching. No Windows driver data or tooling is needed at runtime.
   - `validity-sift.c/.h` – self-contained SIFT matcher (no OpenCV).
   - `validity-handshake.c`, `validity-crypto.c`, `validity-pairing.c`,
     `validity-pretls-pair.c` – Synaptics-modified TLS, pairing, key storage.
+  - `validity-commands.c` – wire command builders (ClientHello, capture,
+    read image, LED, flash) and the debug overrides for captured commands.
+  - `validity-init-data.c`, `validity-init-clean-slate.c`,
+    `validity-enroll-data.c` – static protocol payloads (INIT_MSG4 variants,
+    hostpart); `validity-pubkeys.c` – zeroed paired-identity placeholders.
   - `meson-fragment.txt` – lines to add to libfprint's meson files.
 - `packaging/setup-fprintd.sh` – fprintd systemd drop-in helper.
 
