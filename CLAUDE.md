@@ -233,16 +233,19 @@ depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
    the stored print as template when the device has UPDATE_PRINT), upstream
    or as a local patch.
 3. Encrypt stored prints: implemented (driver format 2 + key file,
-   `setup-fprintd.sh --encrypt-prints` / `--drop-file-key` with an
-   `ImportCredential=` credential, host+tpm2, no PCRs, plus
-   `DeviceAllow=/dev/tpmrm0 rw`). Tested 2026-10-20 with fprintd: enroll,
+   `setup-fprintd.sh --encrypt-prints` / `--drop-file-key` with a
+   credential `/etc/validity0088/print-key.cred`, host+tpm2, no PCRs,
+   decrypted by the helper unit `validity0088-print-key.service` into
+   `/run/credstore`, imported by fprintd with `ImportCredential=`). Tested 2026-10-20 with fprintd: enroll,
    verify, `--drop-file-key`, verify with the credential only.
    `--encryption-off/--encryption-on/--delete-key/--status` added later
    (tested in a sandbox only). Not yet checked: PAM login with an
-   encrypted print; the new options on the real system. Known limitation: an
-   undecryptable credential (TPM cleared) stops fprintd from starting
-   (exit 243); a helper-unit rework is described in
-   `docs/print-encryption.md`.
+   encrypted print; the new options on the real system. The helper unit
+   (2026-10-20) replaced importing the encrypted credential into fprintd,
+   which needed `DeviceAllow=/dev/tpmrm0 rw` and stopped fprintd (exit 243)
+   when the credential could not be decrypted; the helper design was tested
+   with transient units, the script in the sandbox only. Not yet checked:
+   migration and verify through the helper on the real system.
 4. Optional k-of-n rule (require ≥2 templates above a lower threshold).
    Probably unnecessary: wrong fingers never exceeded 7 (item 1), so there
    is no false-accept problem to fix, and k-of-n would raise false rejects.

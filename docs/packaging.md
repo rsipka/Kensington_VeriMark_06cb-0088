@@ -109,11 +109,11 @@ Run as root (`sudo`), from a normal terminal — sandboxed shells that set the
 |---|---|
 | `<builddir>` | Write `fprintd.service.d/override.conf`: bind-mount the build's library directory to `/run/libfprint-validity-0088` and point `LD_LIBRARY_PATH` at it; `RequiresMountsFor=` the build directory. Keeps a `.bak` copy of an existing drop-in, restarts fprintd and checks that it mapped the library from the build. Symlinked paths are resolved. |
 | `--status` | Library in use, encryption on/off, key source, number of encrypted and unencrypted prints of this driver |
-| `--encrypt-prints` | Store the print key as systemd credential `/etc/credstore.encrypted/validity0088-print-key` (host+tpm2 when the TPM is usable, else host; no PCR binding), importing an existing `print-key` file; drop-in `validity0088-print-key.conf` with `ImportCredential=` and `DeviceAllow=/dev/tpmrm0 rw` |
+| `--encrypt-prints` | Store the print key as systemd credential `/etc/validity0088/print-key.cred` (host+tpm2 when the TPM is usable, else host; no PCR binding), importing an existing `print-key` file; helper unit `validity0088-print-key.service` decrypts it into `/run/credstore`, drop-in `validity0088-print-key.conf` makes fprintd pull in the helper and `ImportCredential=` the key. Moves a credential from the earlier location `/etc/credstore.encrypted/` |
 | `--drop-file-key` | Delete the `print-key` file once the credential holds the same key |
 | `--encryption-off` / `--encryption-on` | Drop-in `validity0088-encryption.conf` with `VALIDITY0088_PRINT_ENCRYPTION=0` / remove it; encrypted prints stay readable while the key exists |
-| `--delete-key [--yes]` | Delete credential, key file and key drop-in after confirmation; encrypted prints become unreadable |
-| `--remove` | Remove all drop-ins of this script; the credential is kept |
+| `--delete-key [--yes]` | Delete credential, key file, helper unit and key drop-in after confirmation; encrypted prints become unreadable |
+| `--remove` | Remove all drop-ins and the helper unit of this script; the credential is kept |
 
 After rebuilding the library: `sudo systemctl restart fprintd`.
 
@@ -142,15 +142,12 @@ matching drop-ins.
   (`BindReadOnlyPaths=`).
 - **`RequiresMountsFor=`** makes fprintd wait at boot for the disk that holds
   the build.
-- **`DeviceAllow=/dev/tpmrm0 rw`**: systemd decrypts imported credentials
-  inside the unit's device policy, and fprintd's unit only allows the
-  fingerprint device classes. Without the line the TPM cannot be opened and
-  fprintd exits with status 243.
-- **Undecryptable credential → fprintd does not start** (systemd 255, tested
-  with `ImportCredential=` and `LoadCredentialEncrypted=`; a *missing*
-  credential is fine). Recovery:
-  [print-encryption.md](print-encryption.md#recovery); a helper-unit design
-  that avoids the problem is described there too.
+- **A helper unit decrypts the print key**, not fprintd: systemd fails a
+  unit whose credential cannot be decrypted (status 243/CREDENTIALS, tested
+  with systemd 255), so a cleared TPM would otherwise stop fprintd for every
+  reader. Now only `validity0088-print-key.service` fails and fprintd starts
+  without the key. fprintd's unit also needs no access to the TPM. Details
+  and recovery: [print-encryption.md](print-encryption.md#recovery).
 
 ## Storage under fprintd
 

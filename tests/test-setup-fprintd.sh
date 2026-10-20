@@ -5,7 +5,9 @@
 # The script runs on a copy whose system paths point into a temporary
 # directory, with stand-ins for systemctl and systemd-creds (the fake
 # "encryption" prefixes FAKECRED; decryption fails without it, like a
-# credential that cannot be decrypted). Runs as root (e.g. in a container)
+# credential that cannot be decrypted). The systemctl stand-in plays the
+# print key helper unit (restart decrypts the credential into run/credstore,
+# stop removes it) and fprintd's ImportCredential=. Runs as root (e.g. in a container)
 # or as root of a user namespace (unshare -r); prints "skip" if neither works.
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
@@ -30,17 +32,24 @@ ok ()   { echo "ok   $*"; }
 fail () { echo "FAIL $*"; FAILS=$((FAILS + 1)); }
 check () { if eval "$1"; then ok "$2"; else fail "$2"; fi; }   # condition, label
 
-mkdir -p "$W/bin" "$W/etc/systemd/system" "$W/run/credentials/fprintd.service" \
+mkdir -p "$W/bin" "$W/etc/systemd/system" "$W/run/credentials/fprintd.service" "$W/etc/credstore.encrypted" \
          "$W/var/lib/fprint/validity-0088-pairing" "$W/proc/4242" \
          "$W/build/libfprint" "$W/nodriver/libfprint"
 
 cat > "$W/bin/systemctl" <<EOF
 #!/bin/bash
 echo "systemctl \$*" >> "$W/systemctl.log"
-case "\$1" in
-  show)    echo \${FAKE_PID:-4242} ;;
-  restart) [ -f "$W/etc/systemd/system/fprintd.service.d/validity0088-print-key.conf" ] &&
-           [ -f "$W/etc/credstore.encrypted/validity0088-print-key" ] &&
+case "\$1 \${2:-}" in
+  show*)   echo \${FAKE_PID:-4242} ;;
+  "restart validity0088-print-key.service")
+           mkdir -p "$W/run/credstore"
+           exec "$W/bin/systemd-creds" decrypt --name=validity0088-print-key \
+                "$W/etc/validity0088/print-key.cred" "$W/run/credstore/validity0088-print-key" ;;
+  "stop validity0088-print-key.service")
+           rm -f "$W/run/credstore/validity0088-print-key" ;;
+  restart*) rm -f "$W/run/credentials/fprintd.service/validity0088-print-key"
+           [ -f "$W/etc/systemd/system/fprintd.service.d/validity0088-print-key.conf" ] &&
+           [ -f "$W/run/credstore/validity0088-print-key" ] &&
            touch "$W/run/credentials/fprintd.service/validity0088-print-key"
            exit \${FAKE_RESTART_RC:-0} ;;
 esac
@@ -66,7 +75,10 @@ printf 'ELF...' > "$W/nodriver/libfprint/libfprint-2.so.2.0.0"
 echo "7f00 r-xp /run/libfprint-validity-0088/libfprint-2.so.2.0.0" > "$W/proc/4242/maps"
 
 sed -e "s|^OVERRIDE_DIR=.*|OVERRIDE_DIR=$W/etc/systemd/system/fprintd.service.d|" \
-    -e "s|^CRED_DIR=.*|CRED_DIR=$W/etc/credstore.encrypted|" \
+    -e "s|^CRED_DIR=.*|CRED_DIR=$W/etc/validity0088|" \
+    -e "s|^LEGACY_CRED_FILE=.*|LEGACY_CRED_FILE=$W/etc/credstore.encrypted/validity0088-print-key|" \
+    -e "s|^UNIT_DIR=.*|UNIT_DIR=$W/etc/systemd/system|" \
+    -e "s|^RUN_CREDSTORE=.*|RUN_CREDSTORE=$W/run/credstore|" \
     -e "s|^KEY_FILE=.*|KEY_FILE=$W/var/lib/fprint/validity-0088-pairing/print-key|" \
     -e "s|^PRINT_ROOT=.*|PRINT_ROOT=$W/var/lib/fprint|" \
     -e "s|\"/proc/\$PID/maps\"|\"$W/proc/\$PID/maps\"|" \
@@ -75,7 +87,10 @@ sed -e "s|^OVERRIDE_DIR=.*|OVERRIDE_DIR=$W/etc/systemd/system/fprintd.service.d|
 
 D="$W/etc/systemd/system/fprintd.service.d"
 OV="$D/override.conf"
-C="$W/etc/credstore.encrypted/validity0088-print-key"
+C="$W/etc/validity0088/print-key.cred"
+LC="$W/etc/credstore.encrypted/validity0088-print-key"
+H="$W/etc/systemd/system/validity0088-print-key.service"
+PK="$W/run/credstore/validity0088-print-key"
 K="$W/var/lib/fprint/validity-0088-pairing/print-key"
 P="$W/var/lib/fprint/user/validity-0088/dev"
 
@@ -115,8 +130,16 @@ check '[ $RC -eq 0 ] && [ "$(tail -c +9 "$C" | cmp - "$K" && echo same)" = same 
       "encrypt-prints: existing key file imported into the credential"
 check '[ "$(stat -c %a "$C")" = 600 ]' "encrypt-prints: credential mode 600"
 check 'grep -q "^ImportCredential=validity0088-print-key" "$D/validity0088-print-key.conf" &&
-       grep -q "^DeviceAllow=/dev/tpmrm0 rw" "$D/validity0088-print-key.conf"' \
-      "encrypt-prints: drop-in imports the credential and allows the TPM"
+       grep -q "^Wants=validity0088-print-key.service" "$D/validity0088-print-key.conf" &&
+       grep -q "^After=validity0088-print-key.service" "$D/validity0088-print-key.conf" &&
+       ! grep -q DeviceAllow "$D/validity0088-print-key.conf"' \
+      "encrypt-prints: drop-in pulls in the helper and imports the key, no TPM access for fprintd"
+check 'grep -q "^ExecStart=$W/bin/systemd-creds decrypt --name=validity0088-print-key $C $PK$" "$H" &&
+       grep -q "^Before=fprintd.service" "$H" && grep -q "^UMask=0077" "$H" &&
+       grep -q "^ExecStop=.*rm -f $PK$" "$H"' \
+      "encrypt-prints: helper unit decrypts the credential into run/credstore"
+check 'cmp -s "$PK" "$K" && [ -e "$W/run/credentials/fprintd.service/validity0088-print-key" ]' \
+      "encrypt-prints: helper provided the key, fprintd received it"
 cp "$C" "$W/c.before"
 run --encrypt-prints
 check '[ $RC -eq 0 ] && cmp -s "$C" "$W/c.before"' "encrypt-prints: rerun reuses the credential"
@@ -129,10 +152,32 @@ rm -f "$K"
 printf garbage > "$C"
 run --encrypt-prints
 check '[ $RC -ne 0 ] && [ "$(cat "$C")" = garbage ]' "encrypt-prints: undecryptable credential never replaced"
+run --status
+check 'echo "$OUTPUT" | grep -q "CANNOT be decrypted"' "status: undecryptable credential reported"
 rm -f "$C"
 run --encrypt-prints
 check '[ $RC -eq 0 ] && [ "$(tail -c +9 "$C" | wc -c)" -eq 32 ]' "encrypt-prints: new 32-byte key generated"
-check '! ls -A "$W/etc/credstore.encrypted" | grep -q "^\.validity"' "encrypt-prints: no temporary files left"
+check '! ls -A "$W/etc/validity0088" | grep -q "^\.validity"' "encrypt-prints: no temporary files left"
+check '[ "$(stat -c %a "$W/etc/validity0088")" = 700 ]' "encrypt-prints: credential directory mode 700"
+
+# --- migration from the earlier credential location -------------------------
+mv "$C" "$LC"; cp "$LC" "$W/lc.before"; rm -f "$PK" "$H"
+run --status
+check 'echo "$OUTPUT" | grep -q "old location"' "status: credential in the old location flagged"
+run --encrypt-prints
+check '[ $RC -eq 0 ] && [ ! -e "$LC" ] && cmp -s "$C" "$W/lc.before" && [ -e "$H" ]' \
+      "encrypt-prints: old credential moved unchanged, helper installed"
+cp "$C" "$LC"
+run --encrypt-prints
+check '[ $RC -eq 0 ] && [ ! -e "$LC" ] && cmp -s "$C" "$W/lc.before"' \
+      "encrypt-prints: same key in both places -> old copy removed"
+{ printf FAKECRED; head -c 32 /dev/urandom; } > "$LC"
+run --encrypt-prints
+check '[ $RC -ne 0 ] && [ -e "$LC" ] && echo "$OUTPUT" | grep -q "different keys"' \
+      "encrypt-prints: different keys in both places -> refused, both kept"
+rm -f "$LC"
+run --status
+check 'echo "$OUTPUT" | grep -q "key decrypted for fprintd"' "status: helper state shown"
 
 # --- encryption on/off, status, delete-key ----------------------------------
 mkdir -p "$P"
@@ -149,8 +194,9 @@ run --delete-key
 check '[ $RC -ne 0 ] && [ -e "$C" ] && echo "$OUTPUT" | grep -q "add --yes"' \
       "delete-key: refuses without a terminal or --yes"
 run --delete-key --yes
-check '[ $RC -eq 0 ] && [ ! -e "$C" ] && [ ! -e "$D/validity0088-print-key.conf" ]' \
-      "delete-key --yes: credential and key drop-in removed"
+check '[ $RC -eq 0 ] && [ ! -e "$C" ] && [ ! -e "$D/validity0088-print-key.conf" ] &&
+       [ ! -e "$H" ] && [ ! -e "$PK" ]' \
+      "delete-key --yes: credential, helper unit, decrypted key and drop-in removed"
 run --status
 check 'echo "$OUTPUT" | grep -q "UNREADABLE"' "status: encrypted prints without key marked unreadable"
 
@@ -159,8 +205,8 @@ run --encrypt-prints
 run --encryption-off
 run --remove
 check '[ $RC -eq 0 ] && [ ! -e "$OV" ] && [ ! -e "$D/validity0088-print-key.conf" ] &&
-       [ ! -e "$D/validity0088-encryption.conf" ] && [ -e "$C" ]' \
-      "remove: all drop-ins removed, credential kept"
+       [ ! -e "$D/validity0088-encryption.conf" ] && [ ! -e "$H" ] && [ ! -e "$PK" ] && [ -e "$C" ]' \
+      "remove: drop-ins and helper unit removed, credential kept"
 
 echo "$([ $FAILS -eq 0 ] && echo passed || echo FAILED): $FAILS failure(s)"
 [ $FAILS -eq 0 ]

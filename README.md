@@ -102,7 +102,7 @@ Start with the log: `journalctl -u fprintd -n 50`.
 | "device did not return an image" | The tap was too short or too light; tap again. |
 | A finger matches only in some placements | Enroll it again with more varied placement. |
 | Many failed scans, low scores (e.g. after moving the key to another computer) | Recalibrate: delete `/var/lib/fprint/validity-0088-pairing/calibration.bin` (as root) and restart fprintd; the next scan calibrates (finger off). |
-| fprintd does not start, journal shows `243/CREDENTIALS` | The print key credential can no longer be decrypted, usually because the TPM was cleared. Encrypted prints are lost; recovery steps in [docs/print-encryption.md](docs/print-encryption.md#recovery). |
+| Encrypted prints stop verifying, `--status` says the credential "CANNOT be decrypted" | The TPM was probably cleared; `journalctl -u validity0088-print-key` shows the failure. Those prints are lost; recovery steps in [docs/print-encryption.md](docs/print-encryption.md#recovery). (Setups from before the helper unit: fprintd does not start, `243/CREDENTIALS`; run `--encrypt-prints` again to switch.) |
 | "Stored print is encrypted with key …, which is not available" | Its key is gone (deleted, other computer). Restore the key from a backup, or delete the print and enroll again. |
 | Prints from a much older version (NBIS era) do not verify | `fprintd-delete "$USER"` and enroll again. |
 

@@ -95,4 +95,5 @@ test off, rotation limit 8°, RANSAC tolerance ×6, device id missing from the
 encryption AAD, key file mode 644, broken key falling back to plaintext,
 changed timeslot scaling, mode byte offset off by one, public key part not
 imported, the old `nm | grep -q` check in `setup-fprintd.sh`, missing
-`DeviceAllow` for the TPM, no backup of an existing drop-in.
+`DeviceAllow` for the TPM (setup before the helper unit), no backup of an
+existing drop-in.
