@@ -4,8 +4,8 @@ An open-source `libfprint` driver for the Kensington VeriMark fingerprint key.
 
 > **Install, plug in, works.**
 >
-> 1. Add the driver to a fresh `libfprint` source tree (section 2)
-> 2. `meson compile -C builddir`
+> 1. `packaging/build-libfprint.sh` — fetches libfprint, adds the driver, builds it (section 2)
+> 2. `sudo packaging/setup-fprintd.sh build/libfprint/builddir` — makes fprintd use that build (section 3)
 > 3. Plug in your VeriMark
 > 4. `fprintd-enroll` (or `examples/enroll` for testing)
 >
@@ -214,7 +214,8 @@ The steps below are written for **CachyOS / Arch with KDE Plasma 6** and the Pla
 **Easy path — use the bundled setup script:**
 
 ```bash
-sudo packaging/setup-fprintd.sh /path/to/libfprint/builddir
+sudo packaging/setup-fprintd.sh build/libfprint/builddir      # build from packaging/build-libfprint.sh
+sudo packaging/setup-fprintd.sh /path/to/libfprint/builddir   # or a build made by hand
 ```
 
 That writes the systemd drop-in (keeping a `.bak` copy of any existing one), reloads the daemon, restarts `fprintd.service`, and checks that fprintd really loaded the library from your build. `sudo packaging/setup-fprintd.sh --remove` undoes it. Skip to step 2.
@@ -265,7 +266,7 @@ Use the real path (no symlinks) of the build directory. `RequiresMountsFor=` mak
 
 The `BindReadOnlyPaths=src:dst` line bind-mounts the build's lib directory at a stable system path (`/run/libfprint-validity-0088`) inside fprintd's mount namespace, then points `LD_LIBRARY_PATH` at that mount. This is needed because the fprintd unit ships with `ProtectHome=yes`, which hides `/home` from the service — bind-mounting to a `/home`-relative destination wouldn't help (the destination is under the hidden tmpfs), so we bind to a path outside `/home`.
 
-Save, then reload and restart:
+(Prefer the script if you also want print encryption with a systemd credential: it writes the matching drop-ins.) Save, then reload and restart:
 
 ```bash
 sudo systemctl daemon-reload
@@ -346,7 +347,13 @@ To extend fingerprint authentication to `sudo`, add the same `auth sufficient pa
 
 ## 4. Copyright
 
-This project is published under the GNU Lesser General Public License version 2.1 or later (LGPL-2.1-or-later), matching upstream `libfprint`. See the `LICENSE` file for the full text.
+This project is published under the GNU Lesser General Public License version 2.1 or later (LGPL-2.1-or-later), matching upstream `libfprint`. See the `LICENSE` file for the full text. Every source file carries an `SPDX-License-Identifier: LGPL-2.1-or-later` line.
+
+**Copyright holders.** © 2026 VisorCraft LLC (original driver) and © 2026 Radek Sipka (this fork: sensor calibration, SIFT matcher, identify, print encryption, tools and packaging). The git history records who wrote what.
+
+**Third-party software.** The driver contains no code from other projects. It is compiled into `libfprint` (LGPL-2.1-or-later) and uses GLib (LGPL-2.1-or-later) and OpenSSL 3 (Apache-2.0). Apache-2.0 is compatible with version 3 of the LGPL, which the "or later" clause allows, so the combination can be distributed; upstream `libfprint` links OpenSSL the same way. The SIFT matcher is an own implementation of the published algorithm; the SIFT patent (US 6,711,293) expired in March 2020.
+
+**Interoperability.** The USB protocol was worked out by observing the device's communication and by studying the Windows driver, for the sole purpose of making the device work on Linux. No Windows driver code is included. The repository does contain protocol data observed on the USB link (initialisation and host-part payloads, the generic capture-program skeleton), because the device does not work without it; it holds no sensor calibration and no data of any particular device.
 
 **Disclaimer of affiliation.** This is an independent, open-source community project. The maintainers of this repository have no affiliation with, endorsement from, or sponsorship by Kensington Computer Products Group, ACCO Brands Corporation, Synaptics Incorporated, or any other company whose hardware or software is referenced in this work. "Kensington" and "VeriMark" are trademarks of their respective owners; all references to those marks in this repository are descriptive nominative use only, used solely to identify the hardware device this driver supports. Any other product or company names mentioned may be trademarks of their respective owners.
 

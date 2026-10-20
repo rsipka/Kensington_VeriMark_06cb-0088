@@ -53,14 +53,18 @@ Manually, in a libfprint checkout:
    (older trees: `driver_helper_mapping`, `'validity_0088' : [ 'openssl' ]`).
 3. `meson setup builddir -Ddrivers=validity_0088 && ninja -C builddir`.
 
-Test without installing:
+Test without installing (B = `build/libfprint/builddir`, or a manual build):
 
 ```
-G_MESSAGES_DEBUG=all LD_LIBRARY_PATH=$PWD/builddir/libfprint ./builddir/examples/enroll
-G_MESSAGES_DEBUG=all LD_LIBRARY_PATH=$PWD/builddir/libfprint ./builddir/examples/verify
+G_MESSAGES_DEBUG=all LD_LIBRARY_PATH=$B/libfprint $B/examples/enroll
+G_MESSAGES_DEBUG=all LD_LIBRARY_PATH=$B/libfprint $B/examples/verify
+G_MESSAGES_DEBUG=all LD_LIBRARY_PATH=$B/libfprint $B/examples/identify
 ```
 
-`examples/*` keep prints in `test-storage.variant` in the current folder.
+`examples/*` keep prints in `test-storage.variant` in the current folder (run
+them from a scratch folder); the finger menu is 0-based (6 = right index).
+Last full sensor check: libfprint v1.94.100 build from the script, enroll 10/10,
+verify 3/3 (2026-10-20).
 Testing needs a person to touch the sensor; ask before each tap sequence.
 
 fprintd uses the build through a systemd drop-in
@@ -208,9 +212,14 @@ depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
    `setup-fprintd.sh --encrypt-prints` / `--drop-file-key` with an
    `ImportCredential=` credential, host+tpm2, no PCRs, plus
    `DeviceAllow=/dev/tpmrm0 rw`). Tested 2026-10-20 with fprintd: enroll,
-   verify, `--drop-file-key`, verify with the credential only. Not yet
-   checked: PAM login with an encrypted print. Known limitation: an
+   verify, `--drop-file-key`, verify with the credential only.
+   `--encryption-off/--encryption-on/--delete-key/--status` added later
+   (tested in a sandbox only). Not yet checked: PAM login with an
+   encrypted print; the new options on the real system. Known limitation: an
    undecryptable credential (TPM cleared) stops fprintd from starting
    (exit 243); a helper-unit rework is described in
    `docs/print-encryption.md`.
 4. Optional k-of-n rule (require ≥2 templates above a lower threshold).
+   Probably unnecessary: wrong fingers never exceeded 7 (item 1), so there
+   is no false-accept problem to fix, and k-of-n would raise false rejects.
+   Can be evaluated offline with the saved scans if needed.

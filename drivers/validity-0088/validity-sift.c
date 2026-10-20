@@ -14,6 +14,9 @@
  * Matching: nearest neighbour with Lowe's ratio test, then RANSAC over a
  * similarity transform (rotation + translation + small scale); the score is
  * the number of geometrically consistent matches.
+ *
+ * Written from the published algorithm (no third-party code). The SIFT
+ * patent (US 6,711,293) expired in March 2020.
  */
 
 #include <glib.h>
