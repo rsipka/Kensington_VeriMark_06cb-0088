@@ -1372,7 +1372,8 @@ verify_read_image_cb (FpDevice     *device,
   GError *err = NULL;
   FpImage *image;
 
-  if (plain_len != VALIDITY_IMAGE_RECORD_LEN)
+  if (plain_len != VALIDITY_IMAGE_RECORD_LEN ||
+      (plain[0] | (plain[1] << 8)) != 0)
     {
       g_autofree gchar *hex = validity_hex_prefix (plain, plain_len, 32);
       fpi_ssm_mark_failed (ssm,
@@ -1481,8 +1482,10 @@ validity_verify_run_state (FpiSsm   *ssm,
         gsize cmd_len;
         g_autofree guint8 *cmd =
             validity_build_enroll_read_image_command (0x2000, &cmd_len);
+        /* check_status=FALSE: a bad scan answers 0x51 with non-zero status
+         * (0x0007); verify_read_image_cb() turns that into a retry. */
         validity_ssm_exchange (ssm, device, "verify-read-image",
-                               cmd, cmd_len, TRUE,
+                               cmd, cmd_len, FALSE,
                                verify_read_image_cb, NULL);
       }
       break;
