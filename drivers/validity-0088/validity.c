@@ -244,7 +244,8 @@ validity_validate_status (const gchar  *label,
       return FALSE;
     }
 
-  guint16 status = ((guint16) rsp[0] << 8) | rsp[1];
+  /* Little-endian: matches flash_exchange_status() and the Windows driver. */
+  guint16 status = ((guint16) rsp[0]) | ((guint16) rsp[1] << 8);
   if (status == 0x0000)
     return TRUE;
 
@@ -534,7 +535,7 @@ validity_send_cert_acquisition (FpDevice  *dev,
 {
   /* Virgin-path 0x4f payload is a 5-byte zero-padded buffer
    * `4f 00 00 00 00`, not a bare 1-byte opcode. A 1-byte send
-   * returns 0x0104 because the device's command framer expects
+   * returns 0x0401 because the device's command framer expects
    * the full 5-byte form. */
   guint8 request[5] = { 0x4f, 0x00, 0x00, 0x00, 0x00 };
   g_autofree guint8 *response = NULL;
@@ -556,7 +557,7 @@ validity_send_cert_acquisition (FpDevice  *dev,
       return FALSE;
     }
 
-  guint16 status = ((guint16) response[0] << 8) | response[1];
+  guint16 status = ((guint16) response[0]) | ((guint16) response[1] << 8);
   if (out_status != NULL)
     *out_status = status;
   if (status != 0x0000)

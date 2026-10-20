@@ -511,9 +511,9 @@ gboolean validity_send_host_part_read  (FpDevice  *dev,
 /* Cert blob acquisition via wire 0x4f (P1 / PAIRING.md).
  *
  * If @out_status is non-NULL, the device's 2-byte response status word
- * is always written there (big-endian as logged), regardless of whether
+ * is always written there (little-endian), regardless of whether
  * the function returns TRUE or FALSE. Callers use this to distinguish
- * "device rejected because already paired" (status 0x0104) from generic
+ * "device rejected because already paired" (status 0x0401) from generic
  * I/O failures. */
 gboolean validity_send_cert_acquisition (FpDevice  *dev,
                                          guint8    out_cert_blob[0xb8],
@@ -523,7 +523,7 @@ gboolean validity_send_cert_acquisition (FpDevice  *dev,
 /* Status meanings observed live on 06cb:0088. Add new entries as they're
  * encountered. */
 #define VALIDITY_STATUS_OK                       0x0000u
-#define VALIDITY_STATUS_CERT_ALREADY_ISSUED      0x0104u  /* 0x4f rejection: device has an existing cert context */
+#define VALIDITY_STATUS_CERT_ALREADY_ISSUED      0x0401u  /* 0x4f rejection (wire bytes 01 04): device has an existing cert context */
 #define VALIDITY_STATUS_FLASH_ERASE_NOT_ALLOWED  0x04afu  /* 0x3f rejection: partition cannot be erased in current state */
 
 /* Internal encrypted app-data exchange helpers (validity.c). These route

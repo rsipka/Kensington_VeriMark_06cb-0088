@@ -1685,7 +1685,7 @@ validity_pairing_run_ceremony (FpDevice *dev, GError **error)
    * On a device with cached data, just load it.
    * On a fresh device (no cached blob), acquire via opcode 0x4f.
    *
-   * If 0x4f returns VALIDITY_STATUS_CERT_ALREADY_ISSUED (0x0104), the
+   * If 0x4f returns VALIDITY_STATUS_CERT_ALREADY_ISSUED (0x0401), the
    * device is signaling that it already has an established pairing
    * context - re-pairing is not allowed. We record this in
    * already_paired_observed so the flash-write step can be skipped
@@ -1702,7 +1702,7 @@ validity_pairing_run_ceremony (FpDevice *dev, GError **error)
         {
           if (cert_status == VALIDITY_STATUS_CERT_ALREADY_ISSUED)
             {
-              fp_info ("device reports already paired (0x4f -> 0x0104) — "
+              fp_info ("device reports already paired (0x4f -> 0x0401) — "
                        "skipping cert-store flash write step");
               already_paired_observed = TRUE;
             }
@@ -1786,7 +1786,7 @@ validity_pairing_run_ceremony (FpDevice *dev, GError **error)
   }
 
   /* Step 2c: Write OSB + cert material to cert-store flash partition 1.
-   * Skipped when the device reported "already paired" via 0x0104 (the
+   * Skipped when the device reported "already paired" via 0x0401 (the
    * existing cert store is fine - re-flashing it would risk breaking
    * the working pairing). validity_pairing_flash_write itself defaults
    * to dry-run mode unless VALIDITY0088_FLASH_LIVE=1 is set. */
@@ -1878,7 +1878,7 @@ validity_pairing_run_ceremony (FpDevice *dev, GError **error)
 /* "Device says already paired" marker.
  *
  * Written by the ceremony when wire 0x4f returns
- * VALIDITY_STATUS_CERT_ALREADY_ISSUED (0x0104), which means the device
+ * VALIDITY_STATUS_CERT_ALREADY_ISSUED (0x0401), which means the device
  * already has its cert store populated from a prior pairing. The presence
  * of the marker tells the next open() that the ceremony already ran once
  * and concluded "nothing to do" - state_complete returns TRUE, so the
