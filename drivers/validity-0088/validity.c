@@ -1680,7 +1680,7 @@ validity_identify_best (FpiDeviceValidity0088      *self,
                         gint                        threshold)
 {
   GPtrArray *prints = NULL;
-  gint best = -1;
+  gint best = -1;     /* highest score of any print, for the log */
 
   fpi_device_get_identify_data (device, &prints);
   self->identify_match = NULL;
@@ -1705,10 +1705,10 @@ validity_identify_best (FpiDeviceValidity0088      *self,
           continue;
         }
       fp_dbg ("identify: print %u scores %d (template %d)", i, score, idx);
-      if (score >= threshold && score > best)
+      if (score > best)
         {
           best = score;
-          self->identify_match = print;
+          self->identify_match = score >= threshold ? print : NULL;
         }
     }
 
