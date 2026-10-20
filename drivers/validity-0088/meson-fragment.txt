@@ -18,7 +18,8 @@
 ;         'drivers/validity-0088/validity-enroll-data.c',
 ;         'drivers/validity-0088/validity-pairing.c',
 ;         'drivers/validity-0088/validity-pretls-pair.c',
-;         'drivers/validity-0088/validity-pubkeys.c' ],
+;         'drivers/validity-0088/validity-pubkeys.c',
+         'drivers/validity-0088/validity-sift.c' ],
 ;
 ; ---------------------------------------------------------------------------
 ; 2) libfprint/meson.build  (the OUTER one, in the project root)

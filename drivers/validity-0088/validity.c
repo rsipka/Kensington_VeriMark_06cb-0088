@@ -17,6 +17,7 @@
 
 #include "drivers_api.h"
 #include "validity.h"
+#include "validity-sift.h"
 
 /* ===========================================================================
  * Driver class
@@ -653,51 +654,56 @@ validity_get_image_flags (void)
 }
 
 /* ===========================================================================
- * Image-correlation matcher
+ * SIFT matcher (validity-sift.c)
  *
- * The sensor is a tiny 56 x 144 window (about 7 x 3 mm). NBIS finds only
- * 3-9 minutiae in it, so minutiae matching cannot work. Instead the driver
- * stores the raw enrollment images and compares a new scan against each of
- * them with masked normalized cross-correlation (translation + small
- * rotation search), on high-passed images. Same-finger scans that overlap
- * correlate at 0.65-0.8, different fingers stay below ~0.3.
+ * The sensor is a tiny 56 x 144 window (about 7 x 3 mm) with only 3-9
+ * minutiae, so minutiae matching cannot work. Each accepted enrollment tap
+ * is reduced to SIFT keypoints (position + 128-value gradient histogram);
+ * a scan matches when enough of its keypoints agree with one template under
+ * a single rotation/translation (RANSAC). The score is that number of
+ * consistent keypoints. On a 4-finger test set (40 scans), same-finger
+ * scores were 19-150 (also with the finger rotated by up to 25 degrees),
+ * other fingers scored at most 5.
+ *
+ * Prints store only the keypoints, never the scan itself:
+ *   fpi-data = (u aay): format version 1, one serialised feature set per tap.
+ * Prints from the earlier correlation matcher (fpi-data = aay of raw 56x144
+ * scans) are still accepted; their keypoints are computed on the fly.
  * ========================================================================= */
 
 #define VTPL_W        VALIDITY_IMAGE_WIDTH
 #define VTPL_H        VALIDITY_IMAGE_HEIGHT
 #define VTPL_N        VALIDITY_IMAGE_DATA_LEN
-#define VTPL_SW       (VTPL_W / 2)
-#define VTPL_SH       (VTPL_H / 2)
-#define VTPL_SN       (VTPL_SW * VTPL_SH)
 #define VTPL_HP_R     6
 #define VTPL_MIN_STD  15.0
 
-/* Minimum image correlation (0..1) for a verify to count as a match.
- * Genuine taps score ~0.70-0.80, other fingers stayed below ~0.34.
- * Raise it for fewer false accepts, lower it for fewer false rejects.
- * Can be overridden at run time with VALIDITY0088_NCC_THRESHOLD. */
-#define VTPL_DEFAULT_THRESHOLD  0.50
+#define VALIDITY_PRINT_FORMAT_SIFT 1u
 
-static gdouble
-validity_get_ncc_threshold (void)
+/* Minimum number of geometrically consistent keypoints for a match.
+ * Raise it for fewer false accepts, lower it for fewer false rejects.
+ * Can be overridden at run time with VALIDITY0088_SIFT_THRESHOLD. */
+#define VSIFT_DEFAULT_THRESHOLD  12
+
+static gint
+validity_get_match_threshold (void)
 {
-  const gchar *env = g_getenv ("VALIDITY0088_NCC_THRESHOLD");
+  const gchar *env = g_getenv ("VALIDITY0088_SIFT_THRESHOLD");
   gchar *end = NULL;
-  gdouble value;
+  gint64 value;
 
   if (env == NULL || env[0] == '\0')
-    return VTPL_DEFAULT_THRESHOLD;
+    return VSIFT_DEFAULT_THRESHOLD;
 
-  value = g_ascii_strtod (env, &end);
-  if (end == env || *end != '\0' || value <= 0.0 || value >= 1.0)
+  value = g_ascii_strtoll (env, &end, 10);
+  if (end == env || *end != '\0' || value < 4 || value > 10000)
     {
-      fp_warn ("ignoring invalid VALIDITY0088_NCC_THRESHOLD=%s", env);
-      return VTPL_DEFAULT_THRESHOLD;
+      fp_warn ("ignoring invalid VALIDITY0088_SIFT_THRESHOLD=%s", env);
+      return VSIFT_DEFAULT_THRESHOLD;
     }
-  return value;
+  return (gint) value;
 }
 
-/* Subtract the local mean (box window) so ridges stand out. */
+/* Subtract a (2r+1)^2 box mean: removes brightness drift, keeps ridges. */
 static void
 validity_tpl_highpass (const guint8 *src, gfloat *dst)
 {
@@ -731,239 +737,72 @@ validity_tpl_highpass (const guint8 *src, gfloat *dst)
       }
 }
 
-static void
-validity_tpl_half (const gfloat *src, gfloat *dst)
+/* Feature set for one stored template, either format. */
+static ValiditySiftFeatures *
+validity_tpl_features (GVariant *child, gboolean legacy_raw)
 {
-  for (gint y = 0; y < VTPL_SH; y++)
-    for (gint x = 0; x < VTPL_SW; x++)
-      dst[y * VTPL_SW + x] = 0.25f * (src[(2 * y) * VTPL_W + 2 * x] +
-                                      src[(2 * y) * VTPL_W + 2 * x + 1] +
-                                      src[(2 * y + 1) * VTPL_W + 2 * x] +
-                                      src[(2 * y + 1) * VTPL_W + 2 * x + 1]);
+  gsize n = 0;
+  const guint8 *d = g_variant_get_fixed_array (child, &n, 1);
+
+  if (d == NULL)
+    return NULL;
+  if (legacy_raw)
+    return n == VTPL_N ? validity_sift_extract (d, VTPL_W, VTPL_H) : NULL;
+  return validity_sift_deserialize (d, n);
 }
 
-static void
-validity_tpl_rotate (const gfloat *src, gint w, gint h, gdouble deg,
-                     gfloat *dst, guint8 *mask)
+/* Returns the best keypoint score over all stored templates (-1 if the
+ * print holds nothing usable) and the index of that template. */
+static gint
+validity_tpl_best_score (const guint8 *probe_raw, GVariant *data,
+                         gint *best_idx, GError **error)
 {
-  gdouble rad = deg * G_PI / 180.0;
-  gdouble c = cos (rad), s = sin (rad);
-  gdouble cx = (w - 1) / 2.0, cy = (h - 1) / 2.0;
-
-  for (gint y = 0; y < h; y++)
-    for (gint x = 0; x < w; x++)
-      {
-        gdouble dx = x - cx, dy = y - cy;
-        gdouble sx = c * dx + s * dy + cx;
-        gdouble sy = -s * dx + c * dy + cy;
-        gint ix, iy, ix1, iy1;
-        gdouble fx, fy;
-
-        if (sx < 0 || sy < 0 || sx > w - 1 || sy > h - 1)
-          {
-            dst[y * w + x] = 0;
-            mask[y * w + x] = 0;
-            continue;
-          }
-        ix = (gint) sx;
-        iy = (gint) sy;
-        fx = sx - ix;
-        fy = sy - iy;
-        ix1 = MIN (ix + 1, w - 1);
-        iy1 = MIN (iy + 1, h - 1);
-        dst[y * w + x] = (gfloat) ((1 - fy) * ((1 - fx) * src[iy * w + ix] +
-                                               fx * src[iy * w + ix1]) +
-                                   fy * ((1 - fx) * src[iy1 * w + ix] +
-                                         fx * src[iy1 * w + ix1]));
-        mask[y * w + x] = 1;
-      }
-}
-
-/* Template pixel (x,y) is compared with probe pixel (x+dx, y+dy). */
-static gdouble
-validity_tpl_ncc (const gfloat *a, const gfloat *b, const guint8 *mb,
-                  gint w, gint h, gint dx, gint dy, gint min_n)
-{
-  gint x0 = MAX (0, -dx), x1 = MIN (w, w - dx);
-  gint y0 = MAX (0, -dy), y1 = MIN (h, h - dy);
-  gdouble sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0;
-  gdouble n, cov, va, vb;
-  gint cnt = 0;
-
-  if (x1 <= x0 || y1 <= y0 || (x1 - x0) * (y1 - y0) < min_n)
-    return -2.0;
-
-  for (gint y = y0; y < y1; y++)
-    for (gint x = x0; x < x1; x++)
-      {
-        gdouble pa, pb;
-
-        if (!mb[y * w + x])
-          continue;
-        pa = a[(y + dy) * w + x + dx];
-        pb = b[y * w + x];
-        sa += pa;
-        sb += pb;
-        saa += pa * pa;
-        sbb += pb * pb;
-        sab += pa * pb;
-        cnt++;
-      }
-
-  if (cnt < min_n)
-    return -2.0;
-  n = cnt;
-  cov = sab - sa * sb / n;
-  va = saa - sa * sa / n;
-  vb = sbb - sb * sb / n;
-  if (va < 1e-3 || vb < 1e-3)
-    return -2.0;
-  return cov / sqrt (va * vb);
-}
-
-/* Best correlation of one stored template against the probe (full-res and
- * half-res high-passed probe images already prepared by the caller).
- *
- * A coarse search on half-size images proposes the VTPL_TOPK most promising
- * alignments (distinct peaks), each is then refined at full resolution and
- * the best refined value wins. Taking several candidates matters: tiny
- * overlaps can give a spuriously high coarse score. */
-#define VTPL_TOPK 8
-
-typedef struct
-{
-  gdouble score;
-  gint    ang_idx;
-  gint    dx;
-  gint    dy;
-} ValidityTplCand;
-
-static void
-validity_tpl_cand_add (ValidityTplCand *c, gdouble score, gint ang_idx,
-                       gint dx, gint dy)
-{
-  gint worst = 0;
-
-  for (gint i = 0; i < VTPL_TOPK; i++)
-    {
-      if (c[i].ang_idx == ang_idx && ABS (c[i].dx - dx) <= 2 &&
-          ABS (c[i].dy - dy) <= 2 && c[i].score > -1.5)
-        {
-          if (score > c[i].score)
-            {
-              c[i].score = score;
-              c[i].dx = dx;
-              c[i].dy = dy;
-            }
-          return;
-        }
-      if (c[i].score < c[worst].score)
-        worst = i;
-    }
-
-  if (score > c[worst].score)
-    {
-      c[worst].score = score;
-      c[worst].ang_idx = ang_idx;
-      c[worst].dx = dx;
-      c[worst].dy = dy;
-    }
-}
-
-static gdouble
-validity_tpl_score_one (const gfloat *pf, const gfloat *ps,
-                        const guint8 *tpl_raw)
-{
-  static const gdouble angles[] = { -8, -4, 0, 4, 8 };
-  g_autofree gfloat *tf = g_new (gfloat, VTPL_N);
-  g_autofree gfloat *ts = g_new (gfloat, VTPL_SN);
-  g_autofree gfloat *rs = g_new (gfloat, VTPL_SN);
-  g_autofree gfloat *rf = g_new (gfloat, VTPL_N);
-  g_autofree guint8 *ms = g_new (guint8, VTPL_SN);
-  g_autofree guint8 *mf = g_new (guint8, VTPL_N);
-  ValidityTplCand cand[VTPL_TOPK];
-  gdouble best_f = -2.0;
-
-  for (gint i = 0; i < VTPL_TOPK; i++)
-    {
-      cand[i].score = -2.0;
-      cand[i].ang_idx = -1;
-      cand[i].dx = cand[i].dy = 0;
-    }
-
-  validity_tpl_highpass (tpl_raw, tf);
-  validity_tpl_half (tf, ts);
-
-  for (guint ai = 0; ai < G_N_ELEMENTS (angles); ai++)
-    {
-      validity_tpl_rotate (ts, VTPL_SW, VTPL_SH, angles[ai], rs, ms);
-      for (gint dy = -(VTPL_SH - 1); dy < VTPL_SH; dy++)
-        for (gint dx = -(VTPL_SW - 1); dx < VTPL_SW; dx++)
-          {
-            gdouble v = validity_tpl_ncc (ps, rs, ms, VTPL_SW, VTPL_SH,
-                                          dx, dy, (VTPL_SN * 3) / 10);
-
-            if (v > -1.5)
-              validity_tpl_cand_add (cand, v, (gint) ai, dx, dy);
-          }
-    }
-
-  for (gint ai = 0; ai < (gint) G_N_ELEMENTS (angles); ai++)
-    {
-      gboolean used = FALSE;
-
-      for (gint i = 0; i < VTPL_TOPK; i++)
-        if (cand[i].ang_idx == ai && cand[i].score > -1.5)
-          used = TRUE;
-      if (!used)
-        continue;
-
-      validity_tpl_rotate (tf, VTPL_W, VTPL_H, angles[ai], rf, mf);
-      for (gint i = 0; i < VTPL_TOPK; i++)
-        {
-          if (cand[i].ang_idx != ai || cand[i].score < -1.5)
-            continue;
-          for (gint dy = 2 * cand[i].dy - 2; dy <= 2 * cand[i].dy + 2; dy++)
-            for (gint dx = 2 * cand[i].dx - 2; dx <= 2 * cand[i].dx + 2; dx++)
-              {
-                gdouble v = validity_tpl_ncc (pf, rf, mf, VTPL_W, VTPL_H,
-                                              dx, dy, (VTPL_N * 3) / 10);
-
-                if (v > best_f)
-                  best_f = v;
-              }
-        }
-    }
-
-  return best_f;
-}
-
-/* Returns the best correlation over all stored templates (or -2 if none
- * could be compared) and the index of the template that produced it. */
-static gdouble
-validity_tpl_best_score (const guint8 *probe_raw, GVariant *templates,
-                         gint *best_idx)
-{
-  g_autofree gfloat *pf = g_new (gfloat, VTPL_N);
-  g_autofree gfloat *ps = g_new (gfloat, VTPL_SN);
-  gsize count = g_variant_n_children (templates);
-  gdouble best = -2.0;
+  g_autoptr(ValiditySiftFeatures) probe = NULL;
+  g_autoptr(GVariant) templates = NULL;
+  gboolean legacy = FALSE;
+  gsize count;
+  gint best = -1;
 
   *best_idx = -1;
-  validity_tpl_highpass (probe_raw, pf);
-  validity_tpl_half (pf, ps);
+  if (g_variant_is_of_type (data, G_VARIANT_TYPE ("(uaay)")))
+    {
+      guint32 format;
+      g_variant_get (data, "(u@aay)", &format, &templates);
+      if (format != VALIDITY_PRINT_FORMAT_SIFT)
+        {
+          g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID,
+                       "Stored print uses unknown format %u; please enroll again",
+                       format);
+          return -1;
+        }
+    }
+  else if (g_variant_is_of_type (data, G_VARIANT_TYPE ("aay")))
+    {
+      templates = g_variant_ref (data);
+      legacy = TRUE;
+      fp_dbg ("print stores raw scans (older driver); computing keypoints now");
+    }
+  else
+    {
+      g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID,
+                   "Stored print has no templates; please enroll again");
+      return -1;
+    }
 
+  probe = validity_sift_extract (probe_raw, VTPL_W, VTPL_H);
+  fp_dbg ("scan: %d keypoints", probe->n);
+
+  count = g_variant_n_children (templates);
   for (gsize i = 0; i < count; i++)
     {
       g_autoptr(GVariant) child = g_variant_get_child_value (templates, i);
-      gsize n = 0;
-      const guint8 *raw = g_variant_get_fixed_array (child, &n, 1);
-      gdouble v;
+      g_autoptr(ValiditySiftFeatures) tpl = validity_tpl_features (child, legacy);
+      gint v;
 
-      if (raw == NULL || n != VTPL_N)
+      if (tpl == NULL)
         continue;
-      v = validity_tpl_score_one (pf, ps, raw);
-      fp_dbg ("image correlation vs template %zu: %.3f", i, v);
+      v = validity_sift_match (probe, tpl);
+      fp_dbg ("keypoint matches vs template %zu: %d", i, v);
       if (v > best)
         {
           best = v;
@@ -971,6 +810,9 @@ validity_tpl_best_score (const guint8 *probe_raw, GVariant *templates,
         }
     }
 
+  if (best < 0)
+    g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID,
+                 "Stored print has no usable templates; please enroll again");
   return best;
 }
 
@@ -2018,26 +1860,34 @@ validity_verify_run_state (FpiSsm   *ssm,
       {
         FpPrint *enrolled = NULL;
         g_autoptr(GVariant) data = NULL;
-        gdouble threshold = validity_get_ncc_threshold ();
+        gint threshold = validity_get_match_threshold ();
         gint best_idx = -1;
+        GError *err = NULL;
+        gint score;
 
         fpi_device_get_verify_data (device, &enrolled);
         g_object_get (enrolled, "fpi-data", &data, NULL);
-        if (data == NULL || !g_variant_is_of_type (data, G_VARIANT_TYPE ("aay")))
+        if (data == NULL)
           {
             fpi_ssm_mark_failed (ssm,
                 fpi_device_error_new_msg (FP_DEVICE_ERROR_DATA_INVALID,
-                    "Stored print has no image templates; please enroll again"));
+                    "Stored print has no templates; please enroll again"));
             return;
           }
 
-        self->verify_score = validity_tpl_best_score (self->captured_tpl, data,
-                                                      &best_idx);
-        self->verify_result = (self->verify_score >= threshold) ?
+        score = validity_tpl_best_score (self->captured_tpl, data,
+                                         &best_idx, &err);
+        if (score < 0)
+          {
+            fpi_ssm_mark_failed (ssm, err);
+            return;
+          }
+        self->verify_score = score;
+        self->verify_result = (score >= threshold) ?
                               FPI_MATCH_SUCCESS : FPI_MATCH_FAIL;
-        fp_dbg ("verify result: %s (best image correlation %.3f with template %d, threshold %.2f)",
+        fp_dbg ("verify result: %s (%d consistent keypoints with template %d, threshold %d)",
                 self->verify_result == FPI_MATCH_SUCCESS ? "MATCH" : "NO_MATCH",
-                self->verify_score, best_idx, threshold);
+                score, best_idx, threshold);
         fpi_ssm_next_state (ssm);
       }
       break;
@@ -2278,9 +2128,13 @@ validity_enroll_run_state (FpiSsm   *ssm,
         if (self->enroll_templates == NULL)
           self->enroll_templates =
               g_ptr_array_new_with_free_func ((GDestroyNotify) g_bytes_unref);
-        g_ptr_array_add (self->enroll_templates,
-                         g_bytes_new (self->captured_tpl,
-                                      VALIDITY_IMAGE_DATA_LEN));
+        {
+          g_autoptr(ValiditySiftFeatures) feat =
+              validity_sift_extract (self->captured_tpl, VTPL_W, VTPL_H);
+          fp_dbg ("enroll tap: %d keypoints", feat->n);
+          g_ptr_array_add (self->enroll_templates,
+                           validity_sift_serialize (feat));
+        }
         self->enroll_completed++;
         fp_dbg ("enroll stage %d/%d accepted",
                 self->enroll_completed, VALIDITY_MAX_ENROLL_STAGES);
@@ -2292,7 +2146,7 @@ validity_enroll_run_state (FpiSsm   *ssm,
           fpi_ssm_jump_to_state (ssm, ENROLL_S_STAGE_BEGIN);
         else
           {
-            /* Store all taps as one RAW print: an array of byte arrays. */
+            /* Store the keypoints of all taps (no images): (u aay). */
             GVariantBuilder builder;
 
             g_variant_builder_init (&builder, G_VARIANT_TYPE ("aay"));
@@ -2306,7 +2160,9 @@ validity_enroll_run_state (FpiSsm   *ssm,
                     g_variant_new_fixed_array (G_VARIANT_TYPE_BYTE, d, len, 1));
               }
             g_object_set (enroll_print, "fpi-data",
-                          g_variant_builder_end (&builder), NULL);
+                          g_variant_new ("(u@aay)", VALIDITY_PRINT_FORMAT_SIFT,
+                                         g_variant_builder_end (&builder)),
+                          NULL);
             fpi_ssm_mark_completed (ssm);
           }
       }
