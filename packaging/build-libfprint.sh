@@ -237,7 +237,11 @@ grep -qaF fpi_device_validity_0088_get_type "$LIB" || die "built library lacks t
 say "built $LIB (libfprint $DESC with validity-0088)"
 if grep -q "drivers_validity-0088_" "$REPO/build/meson-compile.log"; then
     WARN="$(grep -c "validity-0088/.*warning:" "$REPO/build/meson-compile.log" || true)"
-    say "$WARN compiler warning(s) in the driver (expected: 8 OpenSSL 3 deprecations in validity-pretls-pair.c); log: build/meson-compile.log"
+    if [ "$WARN" -gt 0 ]; then
+        say "$WARN compiler warning(s) in the driver; see build/meson-compile.log"
+    else
+        say "driver compiled without warnings"
+    fi
 else
     say "driver unchanged since the last build"
 fi
