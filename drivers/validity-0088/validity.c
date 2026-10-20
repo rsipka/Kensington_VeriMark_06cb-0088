@@ -2082,7 +2082,12 @@ validity_enroll_run_state (FpiSsm   *ssm,
         gsize cmd_len;
         g_autofree guint8 *cmd =
             validity_build_enroll_capture_command (
-                device, VALIDITY_CAPTURE_MODE_ENROLL, &cmd_len, &err);
+                device,
+                /* Windows sends mode 0x02 (identify) for the first capture of
+                 * an enrollment and 0x23 (enroll) for every later one. */
+                (self->enroll_completed == 0 && self->enroll_attempts == 0) ?
+                    VALIDITY_CAPTURE_MODE_IDENTIFY : VALIDITY_CAPTURE_MODE_ENROLL,
+                &cmd_len, &err);
         if (cmd == NULL) { fpi_ssm_mark_failed (ssm, err); return; }
         fp_dbg ("enroll stage %d/%d: send capture program",
                 self->enroll_completed + 1, VALIDITY_MAX_ENROLL_STAGES);
