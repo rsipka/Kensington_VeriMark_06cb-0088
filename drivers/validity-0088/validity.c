@@ -35,7 +35,6 @@ struct _FpiDeviceValidity0088
 
   /* Per-task state for the async enroll/verify SSMs. Reset at the
    * start of each task; freed by the SSM done callback. */
-  FpImage           *captured_image;
   FpPrint           *stage_print;
   guint8             captured_tpl[VALIDITY_IMAGE_DATA_LEN];
   GPtrArray         *enroll_templates;   /* GBytes, one per accepted tap */
@@ -591,71 +590,6 @@ validity_send_cert_acquisition (FpDevice  *dev,
   return TRUE;
 }
 
-static gint G_GNUC_UNUSED
-validity_get_bz3_threshold (void)
-{
-  const gchar *env = g_getenv ("VALIDITY0088_BZ3_THRESHOLD");
-  gchar *end = NULL;
-  gint64 value;
-
-  if (env == NULL || env[0] == '\0')
-    return 40;
-
-  value = g_ascii_strtoll (env, &end, 10);
-  if (end == env || *end != '\0' || value <= 0 || value > G_MAXINT)
-    {
-      fp_warn ("ignoring invalid VALIDITY0088_BZ3_THRESHOLD=%s", env);
-      return 40;
-    }
-
-  return (gint) value;
-}
-
-static guint
-validity_get_image_scale (void)
-{
-  const gchar *env = g_getenv ("VALIDITY0088_IMAGE_SCALE");
-  gchar *end = NULL;
-  guint64 value;
-
-  if (env == NULL || env[0] == '\0')
-    return 1;
-
-  value = g_ascii_strtoull (env, &end, 10);
-  if (end == env || *end != '\0' || value == 0 || value > 4)
-    {
-      fp_warn ("ignoring invalid VALIDITY0088_IMAGE_SCALE=%s", env);
-      return 1;
-    }
-
-  return (guint) value;
-}
-
-static FpiImageFlags
-validity_get_image_flags (void)
-{
-  FpiImageFlags flags = FPI_IMAGE_NONE;
-  const gchar *env;
-
-  env = g_getenv ("VALIDITY0088_IMAGE_PARTIAL");
-  if (env != NULL && env[0] != '\0' && g_strcmp0 (env, "0") != 0)
-    flags |= FPI_IMAGE_PARTIAL;
-
-  env = g_getenv ("VALIDITY0088_IMAGE_INVERT");
-  if (env != NULL && env[0] != '\0' && g_strcmp0 (env, "0") != 0)
-    flags |= FPI_IMAGE_COLORS_INVERTED;
-
-  env = g_getenv ("VALIDITY0088_IMAGE_H_FLIP");
-  if (env != NULL && env[0] != '\0' && g_strcmp0 (env, "0") != 0)
-    flags |= FPI_IMAGE_H_FLIPPED;
-
-  env = g_getenv ("VALIDITY0088_IMAGE_V_FLIP");
-  if (env != NULL && env[0] != '\0' && g_strcmp0 (env, "0") != 0)
-    flags |= FPI_IMAGE_V_FLIPPED;
-
-  return flags;
-}
-
 /* ===========================================================================
  * SIFT matcher (validity-sift.c)
  *
@@ -833,82 +767,46 @@ validity_tpl_quality_ok (const guint8 *raw)
   return sqrt (sum2 / VTPL_N) >= VTPL_MIN_STD;
 }
 
-/* Keep the raw scan as a 56 x 144 row-major template. The pixel stream is
- * column-major (56 columns of 144 samples), see validity_image_from_plaintext. */
-static void
-validity_store_template (FpiDeviceValidity0088 *self, const guint8 *plain)
+/* A 0x51 reply holds an image only with status 0 and the full record
+ * length. Anything else (seen: 18 B, status 0x0007) means the tap was too
+ * short or too light; report it as a retry. */
+static GError *
+validity_no_image_error (const guint8 *plain, gsize plain_len)
+{
+  g_autofree gchar *hex = NULL;
+
+  if (plain_len == VALIDITY_IMAGE_RECORD_LEN &&
+      (plain[0] | (plain[1] << 8)) == 0)
+    return NULL;
+
+  hex = validity_hex_prefix (plain, plain_len, 32);
+  return g_error_new (FP_DEVICE_RETRY, FP_DEVICE_RETRY_TOO_SHORT,
+                      "device did not return an image (%zu B: %s)",
+                      plain_len, hex);
+}
+
+/* Keep the scan as a 56 x 144 row-major template. The header says 56 x 144,
+ * but the pixel stream is column-major: 56 columns of 144 samples each, so
+ * transpose it. */
+static gboolean
+validity_store_template (FpiDeviceValidity0088 *self,
+                         const guint8          *plain,
+                         GError               **error)
 {
   const ValidityImageRecord *record = (const ValidityImageRecord *) plain;
+
+  if (!validity_image_record_validate (record))
+    {
+      g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                   "not a valid image record");
+      return FALSE;
+    }
 
   for (gint x = 0; x < VALIDITY_IMAGE_WIDTH; x++)
     for (gint y = 0; y < VALIDITY_IMAGE_HEIGHT; y++)
       self->captured_tpl[y * VALIDITY_IMAGE_WIDTH + x] =
           record->pixels[x * VALIDITY_IMAGE_HEIGHT + y];
-}
-
-static FpImage *
-validity_scale_image_nearest (FpImage *src,
-                              guint    scale)
-{
-  FpImage *dst;
-
-  if (scale <= 1)
-    return g_object_ref (src);
-
-  dst = fp_image_new (src->width * scale, src->height * scale);
-  dst->flags = src->flags;
-
-  for (guint y = 0; y < dst->height; y++)
-    {
-      guint src_y = y / scale;
-
-      for (guint x = 0; x < dst->width; x++)
-        {
-          guint src_x = x / scale;
-
-          dst->data[y * dst->width + x] =
-              src->data[src_y * src->width + src_x];
-        }
-    }
-
-  return dst;
-}
-
-static FpImage *
-validity_image_from_plaintext (const guint8 *plain,
-                               gsize         plain_len,
-                               GError      **error)
-{
-  const ValidityImageRecord *record = (const ValidityImageRecord *) plain;
-  g_autoptr(FpImage) raw_image = NULL;
-  FpImage *image;
-  guint scale;
-
-  if (plain_len != VALIDITY_IMAGE_RECORD_LEN ||
-      !validity_image_record_validate (record))
-    {
-      g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-                   "not a valid image record: %zu B", plain_len);
-      return NULL;
-    }
-
-  /* The header says 56 x 144, but the pixel stream is column-major: it is
-   * 56 columns of 144 samples each (read as 144-wide rows it shows clean,
-   * continuous ridges; read as 56-wide rows every line is scrambled). Build
-   * the 56 x 144 image by transposing so NBIS sees real ridges. */
-  raw_image = fp_image_new (VALIDITY_IMAGE_WIDTH, VALIDITY_IMAGE_HEIGHT);
-  raw_image->flags = validity_get_image_flags ();
-  for (guint x = 0; x < VALIDITY_IMAGE_WIDTH; x++)
-    for (guint y = 0; y < VALIDITY_IMAGE_HEIGHT; y++)
-      raw_image->data[y * VALIDITY_IMAGE_WIDTH + x] =
-          record->pixels[x * VALIDITY_IMAGE_HEIGHT + y];
-
-  scale = validity_get_image_scale ();
-  image = validity_scale_image_nearest (raw_image, scale);
-  fp_dbg ("image prepared for NBIS: %ux%u scale=%u flags=0x%x",
-          image->width, image->height, scale, image->flags);
-
-  return image;
+  return TRUE;
 }
 
 /* ===========================================================================
@@ -1756,30 +1654,16 @@ verify_read_image_cb (FpDevice     *device,
                       gpointer      user_data)
 {
   FpiDeviceValidity0088 *self = FPI_DEVICE_VALIDITY_0088 (device);
-  GError *err = NULL;
-  FpImage *image;
+  GError *err = validity_no_image_error (plain, plain_len);
 
-  if (plain_len != VALIDITY_IMAGE_RECORD_LEN ||
-      (plain[0] | (plain[1] << 8)) != 0)
-    {
-      g_autofree gchar *hex = validity_hex_prefix (plain, plain_len, 32);
-      fpi_ssm_mark_failed (ssm,
-          g_error_new (FP_DEVICE_RETRY, FP_DEVICE_RETRY_TOO_SHORT,
-                       "device did not return an image (%zu B: %s)",
-                       plain_len, hex));
-      return;
-    }
-
-  image = validity_image_from_plaintext (plain, plain_len, &err);
-  if (image == NULL)
+  if (err == NULL)
+    validity_store_template (self, plain, &err);
+  if (err != NULL)
     {
       fpi_ssm_mark_failed (ssm, err);
       return;
     }
 
-  g_clear_object (&self->captured_image);
-  self->captured_image = image;
-  validity_store_template (self, plain);
   fpi_device_report_finger_status (device, FP_FINGER_STATUS_NONE);
   fpi_ssm_next_state (ssm);
 }
@@ -1962,7 +1846,6 @@ validity_verify_ssm_done (FpiSsm   *ssm,
         {
           fpi_device_verify_complete (device, error);
         }
-      g_clear_object (&self->captured_image);
       g_clear_object (&self->stage_print);
       return;
     }
@@ -1971,7 +1854,6 @@ validity_verify_ssm_done (FpiSsm   *ssm,
                             g_steal_pointer (&self->stage_print), NULL);
   fpi_device_verify_complete (device, NULL);
 
-  g_clear_object (&self->captured_image);
 }
 
 /* --- Enroll SSM --------------------------------------------------------- */
@@ -2011,19 +1893,12 @@ enroll_read_image_cb (FpDevice     *device,
                       gpointer      user_data)
 {
   FpiDeviceValidity0088 *self = FPI_DEVICE_VALIDITY_0088 (device);
-  GError *err = NULL;
-  FpImage *image;
+  GError *err = validity_no_image_error (plain, plain_len);
 
-  if (plain_len != VALIDITY_IMAGE_RECORD_LEN ||
-      (plain[0] | (plain[1] << 8)) != 0)
+  if (err != NULL)
     {
-      g_autofree gchar *hex = validity_hex_prefix (plain, plain_len, 32);
-      g_autoptr(GError) retry = g_error_new (FP_DEVICE_RETRY,
-          FP_DEVICE_RETRY_TOO_SHORT,
-          "device did not return an image (%zu B: %s)", plain_len, hex);
-      fp_dbg ("enroll capture retry: %s", retry->message);
-      fpi_device_enroll_progress (device, self->enroll_completed, NULL,
-                                  g_steal_pointer (&retry));
+      fp_dbg ("enroll capture retry: %s", err->message);
+      fpi_device_enroll_progress (device, self->enroll_completed, NULL, err);
       self->enroll_needs_scan_setup = TRUE;
       if (!enroll_bump_attempts_or_fail (ssm, self))
         return;
@@ -2031,16 +1906,12 @@ enroll_read_image_cb (FpDevice     *device,
       return;
     }
 
-  image = validity_image_from_plaintext (plain, plain_len, &err);
-  if (image == NULL)
+  if (!validity_store_template (self, plain, &err))
     {
       fpi_ssm_mark_failed (ssm, err);
       return;
     }
 
-  g_clear_object (&self->captured_image);
-  self->captured_image = image;
-  validity_store_template (self, plain);
   fpi_device_report_finger_status (device, FP_FINGER_STATUS_NONE);
   fpi_ssm_next_state (ssm);
 }
@@ -2200,14 +2071,12 @@ validity_enroll_ssm_done (FpiSsm   *ssm,
   if (error)
     {
       fpi_device_enroll_complete (device, NULL, error);
-      g_clear_object (&self->captured_image);
       g_clear_object (&self->stage_print);
       return;
     }
 
   fpi_device_get_enroll_data (device, &enroll_print);
   fpi_device_enroll_complete (device, g_object_ref (enroll_print), NULL);
-  g_clear_object (&self->captured_image);
 }
 
 /* ===========================================================================
@@ -2463,7 +2332,6 @@ validity_enroll (FpDevice *device)
     fpi_print_set_type (enroll_print, FPI_PRINT_RAW);
   g_clear_pointer (&self->enroll_templates, g_ptr_array_unref);
 
-  g_clear_object (&self->captured_image);
   g_clear_object (&self->stage_print);
   self->enroll_completed = 0;
   self->enroll_attempts = 0;
@@ -2483,7 +2351,6 @@ validity_verify (FpDevice *device)
 
   validity_cancel_reset (device);
 
-  g_clear_object (&self->captured_image);
   g_clear_object (&self->stage_print);
   self->verify_result = FPI_MATCH_ERROR;
 

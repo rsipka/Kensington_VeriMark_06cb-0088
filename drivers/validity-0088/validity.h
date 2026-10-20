@@ -202,8 +202,8 @@ validity_image_record_validate (const ValidityImageRecord *img)
  * device runs in EOH-MOH-StgOnHost mode — feature-extraction happens
  * on the device, but MATCHING happens on the HOST. The "match_result"
  * field below is really an "image-features-extracted-OK" status; the
- * actual match decision is made by libfprint's NBIS matcher against
- * its template database, NOT by the device. */
+ * match decision is made on the host (validity-sift.c), NOT by the
+ * device. */
 #define VALIDITY_MATCH_RESULT_INIT          0x00000000u  /* uninit / first response */
 #define VALIDITY_MATCH_RESULT_PROBE         0x00000080u  /* touch detected, capture in progress */
 #define VALIDITY_MATCH_RESULT_FEATURES_OK   0x00000085u  /* image captured + features extracted */

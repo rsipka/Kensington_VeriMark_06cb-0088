@@ -148,6 +148,4 @@ depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
 4. Optional k-of-n rule (require ≥2 templates above a lower threshold).
 5. `packaging/setup-fprintd.sh`: `nm … | grep -q` under `pipefail` gives a
    false "driver missing" error (SIGPIPE); use `grep … >/dev/null`.
-6. Remove leftover NBIS-related code paths (image scaling knobs,
-   `captured_image` plumbing, `VALIDITY0088_BZ3_THRESHOLD`, `_IMAGE_*`).
-7. Update README for calibration, SIFT, and the extra meson source file.
+6. Update README for calibration, SIFT, and the extra meson source file.
