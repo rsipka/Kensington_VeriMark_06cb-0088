@@ -114,6 +114,10 @@ depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
   (~33 KB per tap, no images). Legacy `aay` raw-image prints still verify
   (features computed on the fly).
 - Quality gate before matching: high-pass RMS ≥ 15.
+- Identify uses the verify SSM; the match step scores the scan against every
+  gallery print and reports the best one at or above the threshold (prints
+  without usable templates are skipped). This also enables fprintd's
+  duplicate check at enroll.
 - Test set (4 fingers × 10 taps, one person): same finger 19–150 (incl.
   synthetic ±25° rotation), other fingers ≤ 5. The old correlation matcher
   failed beyond ~10° rotation and other fingers reached 0.42–0.48 vs 0.50.

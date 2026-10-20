@@ -40,6 +40,7 @@ struct _FpiDeviceValidity0088
   GPtrArray         *enroll_templates;   /* GBytes, one per accepted tap */
   gdouble            verify_score;
   FpiMatchResult     verify_result;
+  FpPrint           *identify_match;     /* borrowed from the identify gallery */
   gint               enroll_completed;
   gint               enroll_attempts;
   gboolean           enroll_needs_scan_setup;
@@ -682,13 +683,13 @@ validity_tpl_features (GVariant *child, gboolean legacy_raw)
   return validity_sift_deserialize (d, n);
 }
 
-/* Returns the best keypoint score over all stored templates (-1 if the
- * print holds nothing usable) and the index of that template. */
+/* Returns the best keypoint score of @probe over all templates of one
+ * print (-1 if the print holds nothing usable) and the index of that
+ * template. */
 static gint
-validity_tpl_best_score (const guint8 *probe_raw, GVariant *data,
+validity_tpl_best_score (const ValiditySiftFeatures *probe, GVariant *data,
                          gint *best_idx, GError **error)
 {
-  g_autoptr(ValiditySiftFeatures) probe = NULL;
   g_autoptr(GVariant) templates = NULL;
   gboolean legacy = FALSE;
   gsize count;
@@ -719,9 +720,6 @@ validity_tpl_best_score (const guint8 *probe_raw, GVariant *data,
                    "Stored print has no templates; please enroll again");
       return -1;
     }
-
-  probe = validity_sift_extract (probe_raw, VTPL_W, VTPL_H);
-  fp_dbg ("scan: %d keypoints", probe->n);
 
   count = g_variant_n_children (templates);
   for (gsize i = 0; i < count; i++)
@@ -1672,6 +1670,58 @@ verify_led_done_timeout (gpointer user_data)
   return G_SOURCE_REMOVE;
 }
 
+/* Identify: pick the best-scoring gallery print at or above the threshold.
+ * Prints without usable templates (other drivers, damaged data) are skipped
+ * so one bad print does not block identification against the others. */
+static void
+validity_identify_best (FpiDeviceValidity0088      *self,
+                        FpDevice                   *device,
+                        const ValiditySiftFeatures *probe,
+                        gint                        threshold)
+{
+  GPtrArray *prints = NULL;
+  gint best = -1;
+
+  fpi_device_get_identify_data (device, &prints);
+  self->identify_match = NULL;
+
+  for (guint i = 0; prints != NULL && i < prints->len; i++)
+    {
+      FpPrint *print = g_ptr_array_index (prints, i);
+      g_autoptr(GVariant) data = NULL;
+      g_autoptr(GError) err = NULL;
+      gint idx, score;
+
+      g_object_get (print, "fpi-data", &data, NULL);
+      if (data == NULL)
+        {
+          fp_dbg ("identify: print %u has no data, skipped", i);
+          continue;
+        }
+      score = validity_tpl_best_score (probe, data, &idx, &err);
+      if (score < 0)
+        {
+          fp_dbg ("identify: print %u skipped: %s", i, err->message);
+          continue;
+        }
+      fp_dbg ("identify: print %u scores %d (template %d)", i, score, idx);
+      if (score >= threshold && score > best)
+        {
+          best = score;
+          self->identify_match = print;
+        }
+    }
+
+  self->verify_score = best;
+  self->verify_result = self->identify_match != NULL ?
+                        FPI_MATCH_SUCCESS : FPI_MATCH_FAIL;
+  fp_dbg ("identify result: %s (best %d consistent keypoints over %u prints, threshold %d)",
+          self->identify_match != NULL ? "MATCH" : "NO_MATCH",
+          best, prints != NULL ? prints->len : 0, threshold);
+}
+
+/* Shared by verify and identify; only the match step and the report
+ * differ (see fpi_device_get_current_action). */
 static void
 validity_verify_run_state (FpiSsm   *ssm,
                            FpDevice *device)
@@ -1738,12 +1788,22 @@ validity_verify_run_state (FpiSsm   *ssm,
 
     case VERIFY_S_MATCH:
       {
+        g_autoptr(ValiditySiftFeatures) probe =
+            validity_sift_extract (self->captured_tpl, VTPL_W, VTPL_H);
         FpPrint *enrolled = NULL;
         g_autoptr(GVariant) data = NULL;
         gint threshold = validity_get_match_threshold ();
         gint best_idx = -1;
         GError *err = NULL;
         gint score;
+
+        fp_dbg ("scan: %d keypoints", probe->n);
+        if (fpi_device_get_current_action (device) == FPI_DEVICE_ACTION_IDENTIFY)
+          {
+            validity_identify_best (self, device, probe, threshold);
+            fpi_ssm_next_state (ssm);
+            break;
+          }
 
         fpi_device_get_verify_data (device, &enrolled);
         g_object_get (enrolled, "fpi-data", &data, NULL);
@@ -1755,8 +1815,7 @@ validity_verify_run_state (FpiSsm   *ssm,
             return;
           }
 
-        score = validity_tpl_best_score (self->captured_tpl, data,
-                                         &best_idx, &err);
+        score = validity_tpl_best_score (probe, data, &best_idx, &err);
         if (score < 0)
           {
             fpi_ssm_mark_failed (ssm, err);
@@ -1824,29 +1883,45 @@ validity_verify_ssm_done (FpiSsm   *ssm,
                           GError   *error)
 {
   FpiDeviceValidity0088 *self = FPI_DEVICE_VALIDITY_0088 (device);
+  gboolean identify =
+      fpi_device_get_current_action (device) == FPI_DEVICE_ACTION_IDENTIFY;
 
   g_assert (self->task_ssm == ssm);
   self->task_ssm = NULL;
 
   if (error)
     {
+      /* A retry (bad tap) is a reported result, anything else fails. */
       if (error->domain == FP_DEVICE_RETRY)
         {
-          fpi_device_verify_report (device, FPI_MATCH_ERROR, NULL, error);
-          fpi_device_verify_complete (device, NULL);
+          if (identify)
+            fpi_device_identify_report (device, NULL, NULL, error);
+          else
+            fpi_device_verify_report (device, FPI_MATCH_ERROR, NULL, error);
+          error = NULL;
         }
+      if (identify)
+        fpi_device_identify_complete (device, error);
       else
-        {
-          fpi_device_verify_complete (device, error);
-        }
+        fpi_device_verify_complete (device, error);
       g_clear_object (&self->stage_print);
+      self->identify_match = NULL;
       return;
     }
 
-  fpi_device_verify_report (device, self->verify_result,
-                            g_steal_pointer (&self->stage_print), NULL);
-  fpi_device_verify_complete (device, NULL);
-
+  if (identify)
+    {
+      fpi_device_identify_report (device, self->identify_match,
+                                  g_steal_pointer (&self->stage_print), NULL);
+      fpi_device_identify_complete (device, NULL);
+    }
+  else
+    {
+      fpi_device_verify_report (device, self->verify_result,
+                                g_steal_pointer (&self->stage_print), NULL);
+      fpi_device_verify_complete (device, NULL);
+    }
+  self->identify_match = NULL;
 }
 
 /* --- Enroll SSM --------------------------------------------------------- */
@@ -2346,8 +2421,11 @@ validity_verify (FpDevice *device)
 
   g_clear_object (&self->stage_print);
   self->verify_result = FPI_MATCH_ERROR;
+  self->identify_match = NULL;
 
-  fp_dbg ("starting validity-0088 async verify");
+  fp_dbg ("starting validity-0088 async %s",
+          fpi_device_get_current_action (device) == FPI_DEVICE_ACTION_IDENTIFY ?
+          "identify" : "verify");
 
   self->task_ssm = fpi_ssm_new (device, validity_verify_run_state,
                                 VERIFY_NUM_STATES);
@@ -2419,6 +2497,7 @@ fpi_device_validity_0088_class_init (FpiDeviceValidity0088Class *klass)
   dev_class->close   = validity_close;
   dev_class->enroll  = validity_enroll;
   dev_class->verify  = validity_verify;
+  dev_class->identify = validity_verify;     /* same SSM, see VERIFY_S_MATCH */
   dev_class->cancel  = validity_cancel;
 
   fpi_device_class_auto_initialize_features (dev_class);
