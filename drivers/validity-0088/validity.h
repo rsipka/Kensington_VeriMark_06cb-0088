@@ -138,7 +138,7 @@ validity_put_le32 (guint8 *p, guint32 v)
 /* Client-direction prefix on TLS handshake records (NOT on app_data) */
 extern const guint8 validity_client_handshake_prefix[4];  /* = { 0x44, 0x00, 0x00, 0x00 } */
 
-/* Low-level USB bulk transfer wrappers — defined in validity.c, used from
+/* Low-level USB bulk transfer wrappers — defined in validity-transport.c, used from
  * other driver source files including validity-pretls-pair.c. */
 gboolean validity_usb_write (FpDevice     *dev,
                              const guint8 *data,
@@ -539,16 +539,56 @@ gboolean validity_send_cert_acquisition (FpDevice  *dev,
 #define VALIDITY_STATUS_FLASH_ERASE_NOT_ALLOWED  0x04afu  /* 0x3f rejection: partition cannot be erased in current state */
 #define VALIDITY_STATUS_FWEXT_NOT_LOADED         0x04afu  /* get_fw_info(fwext) on every working unit; harmless */
 
-/* Internal encrypted app-data exchange helpers (validity.c). These route
- * through validity_usb_write(), which enforces the 06cb:0088 defensive
- * write guard before any USB OUT transfer. */
+/* Per-device state owned by validity.c. */
 ValiditySession *validity_device_get_session (FpDevice *dev);
+GCancellable    *validity_device_get_interrupt_cancellable (FpDevice *dev);
+
+/* Internal encrypted app-data exchange helpers (validity-transport.c).
+ * These route through validity_usb_write(), which enforces the 06cb:0088
+ * defensive write guard before any USB OUT transfer. */
 gboolean validity_exchange_app_plaintext (FpDevice     *dev,
                                           const guint8 *plain,
                                           gsize         plain_len,
                                           guint8      **out_rsp,
                                           gsize        *out_rsp_len,
                                           GError      **error);
+/* Exchange @plain and fail unless the reply status word is 0. */
+gboolean validity_exchange_and_check_status (FpDevice     *dev,
+                                             const gchar  *label,
+                                             const guint8 *plain,
+                                             gsize         plain_len,
+                                             GError      **error);
+
+/* Hex string of the first @max_len bytes of @data, "..." if truncated. */
+gchar *validity_hex_prefix (const guint8 *data,
+                            gsize         len,
+                            gsize         max_len);
+
+/* Async versions for the task SSMs (validity-transport.c). */
+typedef void (*ValidityAsyncRecvCb) (FpDevice     *device,
+                                     FpiSsm       *ssm,
+                                     const guint8 *plain,
+                                     gsize         plain_len,
+                                     gpointer      user_data);
+
+/* Submit one encrypted round-trip: encrypt plain, USB OUT, USB IN, decrypt.
+ * If cb is NULL: on success, advance ssm to next state (after the optional
+ * 2-byte status word check); on error, mark ssm failed.
+ * If cb is non-NULL: invoke cb with the decrypted plaintext; cb owns the
+ * SSM state transition. */
+void validity_ssm_exchange (FpiSsm              *ssm,
+                            FpDevice            *device,
+                            const gchar         *label,
+                            const guint8        *plain,
+                            gsize                plain_len,
+                            gboolean             check_status,
+                            ValidityAsyncRecvCb  cb,
+                            gpointer             cb_data);
+
+/* Wait on EP 0x83 for a finger event, reporting finger status; advances
+ * @ssm once the tap is complete. Cancelled by the interrupt cancellable. */
+void validity_async_submit_interrupt_read (FpiSsm   *ssm,
+                                           FpDevice *device);
 /* LED mode flags written to u32 LE at payload+1 of the 0x39 glow command. */
 #define LED_MODE_STEADY   0u   /* solid, no animation */
 #define LED_MODE_SOLID    1u   /* single ramp/pulse */

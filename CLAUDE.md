@@ -11,6 +11,9 @@ matching. No Windows driver data or tooling is needed at runtime.
   tree at `libfprint/drivers/validity-0088/`.
   - `validity.c` – device class, TLS session use, enroll/verify state machines,
     session prep, calibration states, matcher glue.
+  - `validity-transport.c` – USB bulk read/write, encrypted app-data
+    exchange, reply status checks, async exchange and interrupt-wait helpers
+    for the state machines.
   - `validity-capture-builder.c` – generic capture-program skeleton (2005 B,
     calibration slots blank) and the calibration code that fills it per device.
   - `validity-sift.c/.h` – self-contained SIFT matcher (no OpenCV).
