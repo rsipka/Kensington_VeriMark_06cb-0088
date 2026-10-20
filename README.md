@@ -93,6 +93,7 @@ sudo apt install meson ninja-build build-essential libglib2.0-dev \
          'drivers/validity-0088/validity-match.c',
          'drivers/validity-0088/validity-pairing.c',
          'drivers/validity-0088/validity-pretls-pair.c',
+         'drivers/validity-0088/validity-printkey.c',
          'drivers/validity-0088/validity-pubkeys.c',
          'drivers/validity-0088/validity-sift.c',
          'drivers/validity-0088/validity-transport.c' ],
@@ -152,13 +153,13 @@ Set `VALIDITY0088_RECALIBRATE=1` for one run to calibrate again (finger off). Th
 The sensor window is too small for classic minutiae matching (a scan holds only 3–9 minutiae). The driver instead reduces each scan to up to 250 SIFT keypoints and accepts a match when enough of them agree with one enrolled tap under a single rotation and shift (RANSAC; up to ±25° rotation).
 
 - **Score** = number of consistent keypoints. Match threshold: **12** (`VALIDITY0088_SIFT_THRESHOLD`). In testing, the enrolled finger scored roughly 20–150 and other fingers at most 5.
-- **Prints** store keypoints only (about 33 KB per tap, 10 taps per print), never fingerprint images. Prints made by older versions of this driver that stored raw scans still verify.
+- **Prints** store keypoints only (about 33 KB per tap, 10 taps per print), never fingerprint images, and are **encrypted** (AES-256-GCM) with a key kept in the storage directory (`print-key`, created at the first enrollment). Prints made by older versions of this driver (unencrypted, or storing raw scans) still verify; they stay unencrypted until the finger is enrolled again. Without the key, encrypted prints cannot be read: back it up together with the pairing data. Design and limits: [docs/print-encryption.md](docs/print-encryption.md).
 - **Identify** scores a scan against every enrolled print and reports the best one above the threshold. fprintd uses this for its duplicate check when you enroll.
 - **Coverage matters:** a scan of a finger area that none of the enrolled taps covers scores like a different finger. Vary the placement while enrolling (centre, tip, left and right edge, lower part).
 
 ### Per-device data
 
-**You don't need to supply any.** The driver auto-pairs on first open: it generates a fresh keypair, exchanges it with the device, and persists `cert-blob`, `host-key.pem`, and `device-ecdh-pubkey.bin`. Subsequent opens reuse the on-disk material. The sensor calibration (`calibration.bin`, plus `cal-*.bin` debug dumps) lives in the same directory. All files are mode 600.
+**You don't need to supply any.** The driver auto-pairs on first open: it generates a fresh keypair, exchanges it with the device, and persists `cert-blob`, `host-key.pem`, and `device-ecdh-pubkey.bin`. Subsequent opens reuse the on-disk material. The sensor calibration (`calibration.bin`, plus `cal-*.bin` debug dumps) and the print encryption key (`print-key`) live in the same directory. All files are mode 600.
 
 The storage directory is
 
@@ -175,6 +176,7 @@ To skip the autonomous ceremony (e.g., for debugging), set `VALIDITY0088_SKIP_AU
 | Environment variable | Effect |
 |---|---|
 | `VALIDITY0088_RECALIBRATE=1` | Calibrate the sensor again in the next enroll/verify (keep the finger off the sensor). |
+| `VALIDITY0088_PRINT_ENCRYPTION=0` | Store new prints unencrypted. Encrypted prints can still be read while the key is there. |
 | `VALIDITY0088_SIFT_THRESHOLD=<n>` | Match threshold in consistent keypoints (default 12, allowed 4–10000). Higher means fewer false accepts and more false rejects. |
 | `VALIDITY0088_LED_RESULT=0` | No LED feedback (success pulse / red flash) after a verify or identify. |
 | `VALIDITY0088_VERIFY_MODE=enroll` | Capture verify scans with capture mode `0x23` (as enroll taps) instead of `0x02`. Debugging aid. |

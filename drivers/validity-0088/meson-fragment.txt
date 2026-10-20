@@ -18,6 +18,7 @@
 ;         'drivers/validity-0088/validity-enroll-data.c',
 ;         'drivers/validity-0088/validity-pairing.c',
 ;         'drivers/validity-0088/validity-pretls-pair.c',
+;         'drivers/validity-0088/validity-printkey.c',
 ;         'drivers/validity-0088/validity-transport.c',
 ;         'drivers/validity-0088/validity-match.c',
 ;         'drivers/validity-0088/validity-pubkeys.c',

@@ -1030,7 +1030,9 @@ validity_identify_best (FpiDeviceValidity0088      *self,
           fp_dbg ("identify: print %u has no data, skipped", i);
           continue;
         }
-      score = validity_tpl_best_score (probe, data, &idx, &err);
+      score = validity_tpl_best_score (probe, data,
+                                       fp_print_get_device_id (print),
+                                       &idx, &err);
       if (score < 0)
         {
           fp_dbg ("identify: print %u skipped: %s", i, err->message);
@@ -1148,7 +1150,9 @@ validity_verify_run_state (FpiSsm   *ssm,
             return;
           }
 
-        score = validity_tpl_best_score (probe, data, &best_idx, &err);
+        score = validity_tpl_best_score (probe, data,
+                                         fp_print_get_device_id (enrolled),
+                                         &best_idx, &err);
         if (score < 0)
           {
             fpi_ssm_mark_failed (ssm, err);
@@ -1430,9 +1434,17 @@ validity_enroll_run_state (FpiSsm   *ssm,
           fpi_ssm_jump_to_state (ssm, ENROLL_S_STAGE_BEGIN);
         else
           {
-            g_object_set (enroll_print, "fpi-data",
-                          validity_tpl_print_data (self->enroll_templates),
-                          NULL);
+            GError *err = NULL;
+            GVariant *data = validity_tpl_print_data (
+                self->enroll_templates,
+                fp_print_get_device_id (enroll_print), &err);
+
+            if (data == NULL)
+              {
+                fpi_ssm_mark_failed (ssm, err);
+                return;
+              }
+            g_object_set (enroll_print, "fpi-data", data, NULL);
             fpi_ssm_mark_completed (ssm);
           }
       }

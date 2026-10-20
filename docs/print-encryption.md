@@ -1,6 +1,8 @@
 # Encrypted fingerprint templates — design note
 
-Status: proposal (open item 3 in `CLAUDE.md`). Nothing here is implemented yet.
+Status: driver part implemented (`validity-printkey.c`): format 2, key
+lookup, key file creation, failure messages; tested offline and on the
+sensor. Not yet implemented: `setup-fprintd.sh --encrypt-prints`.
 
 ## Goal
 

@@ -20,6 +20,8 @@ matching. No Windows driver data or tooling is needed at runtime.
   - `validity-capture-builder.c` – generic capture-program skeleton (2005 B,
     calibration slots blank) and the calibration code that fills it per device.
   - `validity-sift.c/.h` – self-contained SIFT matcher (no OpenCV).
+  - `validity-printkey.c/.h` – AES-256-GCM encryption of stored templates
+    (format 2), key lookup (systemd credential, else `print-key` file).
   - `validity-handshake.c`, `validity-crypto.c`, `validity-pairing.c`,
     `validity-pretls-pair.c` – Synaptics-modified TLS, pairing, key storage.
   - `validity-commands.c` – wire command builders (ClientHello, capture,
@@ -64,7 +66,9 @@ Directory from `validity_pairing_get_storage_dir()`:
 `~/.local/share/libfprint/verimark-06cb-0088`.
 
 Contents: pairing keys (`cert-blob`, `host-key.pem`, `device-ecdh-pubkey.bin`),
-`calibration.bin`, and calibration debug dumps `cal-*.bin` (all mode 600).
+`calibration.bin`, calibration debug dumps `cal-*.bin`, and `print-key` (print
+encryption key, created at the first enroll when no credential
+`$CREDENTIALS_DIRECTORY/validity0088-print-key` exists) — all mode 600.
 
 ## Protocol facts (established)
 
@@ -122,9 +126,11 @@ depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
   strongest 250 keypoints, 128-d descriptors.
 - Match: ratio test 0.8 + RANSAC similarity (≤25° rotation, ±15% scale);
   score = consistent keypoints. Threshold 12 (`VALIDITY0088_SIFT_THRESHOLD`).
-- Prints: `fpi-data = (u aay)`, format 1, one serialised feature set per tap
-  (~33 KB per tap, no images). Legacy `aay` raw-image prints still verify
-  (features computed on the fly).
+- Prints: `fpi-data = (u ay ay ay)`, format 2 = (key id, nonce, AES-256-GCM
+  of the format-1 `aay`), AAD = label + key id + print device id. Format 1
+  `(u aay)` (one serialised feature set per tap, ~33 KB each, no images) is
+  written with `VALIDITY0088_PRINT_ENCRYPTION=0`; format 1 and legacy `aay`
+  raw-image prints still verify. Design: `docs/print-encryption.md`.
 - Quality gate before matching: high-pass RMS ≥ 15.
 - Identify uses the verify SSM; the match step scores the scan against every
   gallery print and reports the best one at or above the threshold (prints
@@ -143,6 +149,7 @@ depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
 | `VALIDITY0088_RECALIBRATE=1` | Recalibrate in the next session prep |
 | `VALIDITY0088_SIFT_THRESHOLD=n` | Match threshold (default 12) |
 | `VALIDITY0088_STORAGE_DIR=path` | Override storage directory |
+| `VALIDITY0088_PRINT_ENCRYPTION=0` | Store new prints unencrypted (format 1) |
 | `VALIDITY0088_VERIFY_MODE=enroll` | Verify with capture mode 0x23 |
 | `VALIDITY0088_LED_RESULT=0` | No LED feedback after verify |
 | `VALIDITY0088_NCC_THRESHOLD` | Obsolete (old correlation matcher) |
@@ -170,7 +177,9 @@ depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
    gate (reject ≥130, at most 2 in a row) was tried and dropped: two real
    enrollments never triggered it, and repeating a placement exactly on the
    7 × 3 mm sensor is hard even on purpose.
-3. Encrypt stored prints (AES-256-GCM, key via `systemd-creds`/TPM,
-   `LoadCredentialEncrypted=` in the fprintd drop-in; fallback root-only key
-   file); keep reading unencrypted prints.
+3. Encrypt stored prints: driver part done (format 2, key file fallback,
+   tested offline and on the sensor). Left: `setup-fprintd.sh
+   --encrypt-prints` (systemd credential, host+tpm2, no PCRs,
+   `ImportCredential=`) and testing what fprintd does when the credential
+   cannot be decrypted. See `docs/print-encryption.md`.
 4. Optional k-of-n rule (require ≥2 templates above a lower threshold).

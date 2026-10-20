@@ -17,10 +17,12 @@
 gint validity_get_match_threshold (void);
 
 /* Best score of @probe over all templates of one print's fpi-data @data
- * (either format), or -1 with @error set if nothing in it is usable.
+ * (any format; encrypted prints are decrypted with @device_id, the print's
+ * device id), or -1 with @error set if nothing in it is usable.
  * @best_idx gets the index of the best template. */
 gint validity_tpl_best_score (const ValiditySiftFeatures *probe,
                               GVariant                   *data,
+                              const gchar                *device_id,
                               gint                       *best_idx,
                               GError                    **error);
 
@@ -37,6 +39,9 @@ gboolean validity_store_template (guint8       *tpl,
                                   const guint8 *plain,
                                   GError      **error);
 
-/* fpi-data for an enrolled print from the serialised features of its
- * taps (GBytes). Returns a floating reference. */
-GVariant *validity_tpl_print_data (GPtrArray *templates);
+/* fpi-data for an enrolled print of @device_id from the serialised
+ * features of its taps (GBytes); encrypted unless disabled. Returns a
+ * floating reference, or NULL with @error set. */
+GVariant *validity_tpl_print_data (GPtrArray   *templates,
+                                   const gchar *device_id,
+                                   GError     **error);

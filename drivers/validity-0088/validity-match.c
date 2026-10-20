@@ -13,6 +13,7 @@
 #include "drivers_api.h"
 #include "validity.h"
 #include "validity-match.h"
+#include "validity-printkey.h"
 
 #include <math.h>
 
@@ -29,7 +30,10 @@
  * other fingers scored at most 5.
  *
  * Prints store only the keypoints, never the scan itself:
- *   fpi-data = (u aay): format version 1, one serialised feature set per tap.
+ *   fpi-data = (u aay): format version 1, one serialised feature set per tap;
+ *   fpi-data = (u ay ay ay): format 2, the same aay encrypted with
+ *   AES-256-GCM (validity-printkey.c), written for all new prints unless
+ *   VALIDITY0088_PRINT_ENCRYPTION=0.
  * Prints from the earlier correlation matcher (fpi-data = aay of raw 56x144
  * scans) are still accepted; their keypoints are computed on the fly.
  * ========================================================================= */
@@ -117,7 +121,8 @@ validity_tpl_features (GVariant *child, gboolean legacy_raw)
  * template. */
 gint
 validity_tpl_best_score (const ValiditySiftFeatures *probe, GVariant *data,
-                         gint *best_idx, GError **error)
+                         const gchar *device_id, gint *best_idx,
+                         GError **error)
 {
   g_autoptr(GVariant) templates = NULL;
   gboolean legacy = FALSE;
@@ -125,7 +130,13 @@ validity_tpl_best_score (const ValiditySiftFeatures *probe, GVariant *data,
   gint best = -1;
 
   *best_idx = -1;
-  if (g_variant_is_of_type (data, G_VARIANT_TYPE ("(uaay)")))
+  if (validity_print_is_encrypted (data))
+    {
+      templates = validity_print_decrypt (data, device_id, error);
+      if (templates == NULL)
+        return -1;
+    }
+  else if (g_variant_is_of_type (data, G_VARIANT_TYPE ("(uaay)")))
     {
       guint32 format;
       g_variant_get (data, "(u@aay)", &format, &templates);
@@ -231,11 +242,15 @@ validity_store_template (guint8       *tpl,
 }
 
 /* Print data for the keypoints of all enrollment taps (GBytes from
- * validity_sift_serialize, no images): (u aay). Returns a floating ref. */
+ * validity_sift_serialize, no images): encrypted (u ay ay ay), or (u aay)
+ * with VALIDITY0088_PRINT_ENCRYPTION=0. Returns a floating ref, or NULL
+ * with @error set. */
 GVariant *
-validity_tpl_print_data (GPtrArray *templates)
+validity_tpl_print_data (GPtrArray *templates, const gchar *device_id,
+                         GError **error)
 {
   GVariantBuilder builder;
+  GVariant *aay;
 
   g_variant_builder_init (&builder, G_VARIANT_TYPE ("aay"));
   for (guint i = 0; i < templates->len; i++)
@@ -247,6 +262,8 @@ validity_tpl_print_data (GPtrArray *templates)
       g_variant_builder_add_value (&builder,
           g_variant_new_fixed_array (G_VARIANT_TYPE_BYTE, d, len, 1));
     }
-  return g_variant_new ("(u@aay)", VALIDITY_PRINT_FORMAT_SIFT,
-                        g_variant_builder_end (&builder));
+  aay = g_variant_builder_end (&builder);
+  if (validity_print_encryption_enabled ())
+    return validity_print_encrypt (aay, device_id, error);
+  return g_variant_new ("(u@aay)", VALIDITY_PRINT_FORMAT_SIFT, aay);
 }
