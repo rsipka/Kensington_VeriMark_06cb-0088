@@ -19,10 +19,8 @@ fail () { echo "FAIL $*"; FAILS=$((FAILS + 1)); }
 bad=""
 for f in drivers/validity-0088/*.c; do
     b="$(basename "$f")"
-    for doc in drivers/validity-0088/meson-fragment.txt; do
-        n="$(grep -c "validity-0088/$b'" "$doc")"
-        [ "$n" -eq 1 ] || bad="$bad $b:$doc:$n"
-    done
+    n="$(grep -c "validity-0088/$b'" drivers/validity-0088/meson-fragment.txt)"
+    [ "$n" -eq 1 ] || bad="$bad $b:$n"
 done
 [ -z "$bad" ] && ok "every driver source listed once in meson-fragment.txt" \
               || fail "driver sources not listed exactly once:$bad"
