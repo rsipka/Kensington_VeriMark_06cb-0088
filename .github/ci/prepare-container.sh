@@ -17,10 +17,11 @@ case " ${ID:-} ${ID_LIKE:-} " in
         apt-get install -y -q ca-certificates git python3 ;;
     *" rhel "*|*" fedora "*|*" centos "*)
         # Rocky mirrors can briefly lag behind each other (seen: openssl-devel
-        # newer than the openssl-libs a mirror offered): bring the base system
-        # up to date and let dnf fall back to versions that fit.
+        # newer than the openssl-libs a mirror offered): let dnf fall back to
+        # versions that fit. No full upgrade of the image: it made the Rocky
+        # jobs slow (~7 min) and the packages installed later pull in the
+        # library updates they need anyway.
         echo "best=False" >> /etc/dnf/dnf.conf
-        dnf upgrade -y -q --refresh || true
         dnf install -y -q git python3 diffutils findutils which
         if [ "${ID:-}" != fedora ]; then
             # libgusb-devel and meson come from CRB on RHEL 9 clones
