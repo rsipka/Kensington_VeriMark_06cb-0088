@@ -30,6 +30,7 @@ matching. No Windows driver data or tooling is needed at runtime.
     `validity-enroll-data.c` – static protocol payloads (INIT_MSG4 variants,
     hostpart); `validity-pubkeys.c` – zeroed paired-identity placeholders.
   - `meson-fragment.txt` – lines to add to libfprint's meson files.
+- `packaging/build-libfprint.sh` – fetch libfprint, add the driver, build.
 - `packaging/setup-fprintd.sh` – fprintd systemd drop-in helper.
 - `tools/scan-eval.c` – offline matcher evaluation on scans saved with
   `VALIDITY0088_DUMP_SCANS` (genuine/impostor scores, error rates per
@@ -37,7 +38,14 @@ matching. No Windows driver data or tooling is needed at runtime.
 
 ## Build and test
 
-In a libfprint checkout:
+Easiest: `packaging/build-libfprint.sh` (deps check for Debian/RHEL
+families, clones the latest libfprint release into `build/libfprint`,
+copies the driver, patches both meson files, builds into
+`build/libfprint/builddir`; `--ref`, `--clean`, `--no-update`,
+`--install-deps`). `build/` is git-ignored. Tested with v1.94.100 (new
+`drivers_info` format), v1.94.10 (old format) and master.
+
+Manually, in a libfprint checkout:
 
 1. `libfprint/meson.build` (inner) → `driver_sources['validity_0088']` must
    list all driver `.c` files, **including `validity-sift.c`**.

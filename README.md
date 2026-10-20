@@ -54,7 +54,19 @@ sudo apt install meson ninja-build build-essential libglib2.0-dev \
     libgusb-dev libgudev-1.0-dev libssl-dev libpixman-1-dev pkg-config
 ```
 
-### Build steps
+### Quick build (script)
+
+`packaging/build-libfprint.sh` does all the steps below: it checks the build dependencies (Debian/Ubuntu/Mint and RHEL/Fedora/Alma/Rocky families), clones the latest libfprint release into `build/libfprint` (git-ignored), copies the driver in, registers it in libfprint's meson files (old and new format) and builds it.
+
+```bash
+git clone https://github.com/rsipka/Kensington_VeriMark_06cb-0088.git
+cd Kensington_VeriMark_06cb-0088
+packaging/build-libfprint.sh                 # add --install-deps to install missing packages with sudo
+```
+
+The result is `build/libfprint/builddir`. Re-run the script after every change to the driver; `--ref master` (or any libfprint tag) builds another libfprint version, `--clean` forces a full rebuild, `--no-update` skips fetching libfprint. Then continue with step 6 below (udev rule, optional) and section 3 (fprintd).
+
+### Build steps (manual)
 
 1. **Clone this repository.**
 
