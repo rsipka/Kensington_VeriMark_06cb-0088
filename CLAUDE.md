@@ -179,9 +179,11 @@ depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
    gate (reject ≥130, at most 2 in a row) was tried and dropped: two real
    enrollments never triggered it, and repeating a placement exactly on the
    7 × 3 mm sensor is hard even on purpose.
-3. Encrypt stored prints: driver part done (format 2, key file fallback,
-   tested offline and on the sensor). Left: `setup-fprintd.sh
-   --encrypt-prints` (systemd credential, host+tpm2, no PCRs,
-   `ImportCredential=`) and testing what fprintd does when the credential
-   cannot be decrypted. See `docs/print-encryption.md`.
+3. Encrypt stored prints: implemented (driver format 2 + key file,
+   `setup-fprintd.sh --encrypt-prints` / `--drop-file-key` with an
+   `ImportCredential=` credential, host+tpm2, no PCRs). Left: run it for
+   real with fprintd (enroll, verify, PAM login). Known limitation: an
+   undecryptable credential (TPM cleared) stops fprintd from starting
+   (exit 243); a helper-unit rework is described in
+   `docs/print-encryption.md`.
 4. Optional k-of-n rule (require ≥2 templates above a lower threshold).

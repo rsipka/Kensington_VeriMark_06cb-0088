@@ -206,6 +206,20 @@ sudo packaging/setup-fprintd.sh /path/to/libfprint/builddir
 
 That writes the systemd drop-in (keeping a `.bak` copy of any existing one), reloads the daemon, restarts `fprintd.service`, and checks that fprintd really loaded the library from your build. `sudo packaging/setup-fprintd.sh --remove` undoes it. Skip to step 2.
 
+**Optional — keep the print key in a systemd credential** (sealed with the TPM when available; recommended on systemd systems):
+
+```bash
+sudo packaging/setup-fprintd.sh --encrypt-prints
+```
+
+This stores fprintd's print encryption key in `/etc/credstore.encrypted/validity0088-print-key` (importing the existing key file, so already encrypted prints stay readable) and passes it to fprintd. After a successful `fprintd-verify`, delete the plain key file:
+
+```bash
+sudo packaging/setup-fprintd.sh --drop-file-key
+```
+
+The credential is not bound to boot measurements (PCRs), so firmware or Secure Boot updates do not lock it; clearing the TPM does (see *Troubleshooting*). The TPM itself is not modified, so a dual-boot Windows (including BitLocker) is not affected.
+
 Run it from a normal terminal: `sudo` does not work inside sandboxed shells (for example an AI assistant's shell) that set the "no new privileges" flag. The build directory may be behind a symlink (such as `~/Documents` pointing to another disk); the script resolves it. After rebuilding the library, `sudo systemctl restart fprintd` makes fprintd load the new build.
 
 **Manual path** — if you'd rather edit by hand, run:
@@ -294,6 +308,18 @@ To extend fingerprint authentication to `sudo`, add the same `auth sufficient pa
 - **Verify works for some placements only:** enroll the finger again with more varied placement (step 3).
 - **Calibration seems off** (many failed scans, low match scores after moving the device to another machine or after a firmware change): run once with `VALIDITY0088_RECALIBRATE=1` and the finger off the sensor. For fprintd, delete `/var/lib/fprint/validity-0088-pairing/calibration.bin` instead (as root) and restart fprintd.
 - **fprintd stopped working after the build directory moved:** run `setup-fprintd.sh` again with the new path.
+- **fprintd does not start, journal shows status `243/CREDENTIALS`:** the print key credential can no longer be decrypted, typically because the TPM was cleared (firmware setup, Windows "Clear TPM", or some firmware updates). The prints encrypted with that key are lost. To recover:
+
+  ```bash
+  sudo mv /etc/credstore.encrypted/validity0088-print-key /etc/credstore.encrypted/validity0088-print-key.broken
+  sudo systemctl restart fprintd
+  fprintd-delete "$USER"
+  fprintd-enroll "$USER"
+  sudo packaging/setup-fprintd.sh --encrypt-prints
+  ```
+
+  The new enrollment creates a new key file, which `--encrypt-prints` turns into a new credential; then run `--drop-file-key` after a successful verify.
+- **"Stored print is encrypted with key …, which is not available":** the key that print was made with is gone (deleted `print-key`, other machine). Restore the key from a backup, or delete the print and enroll the finger again.
 - **Prints enrolled with a much older version** of this driver (NBIS era) do not verify any more: delete them (`fprintd-delete "$USER"`) and enroll again.
 
 ## 4. Copyright

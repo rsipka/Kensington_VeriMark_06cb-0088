@@ -1,8 +1,8 @@
 # Encrypted fingerprint templates — design note
 
-Status: driver part implemented (`validity-printkey.c`): format 2, key
-lookup, key file creation, failure messages; tested offline and on the
-sensor. Not yet implemented: `setup-fprintd.sh --encrypt-prints`.
+Status: implemented. Driver part in `validity-printkey.c` (format 2, key
+lookup, key file creation, failure messages), fprintd part in
+`packaging/setup-fprintd.sh --encrypt-prints` / `--drop-file-key`.
 
 ## Goal
 
@@ -88,11 +88,14 @@ credential is the real protection.
 
 ## fprintd: the key as a systemd credential
 
-`setup-fprintd.sh --encrypt-prints` (new option):
+`setup-fprintd.sh --encrypt-prints`:
 
-1. If `/var/lib/fprint/validity-0088-pairing/print-key` exists, use that key
-   (so existing encrypted prints stay readable), else generate a new one. The
-   key goes through a pipe only, never a new plaintext file:
+1. If `/etc/credstore.encrypted/validity0088-print-key` already exists, reuse
+   it (it must decrypt to 32 bytes; a credential that cannot be decrypted is
+   never replaced). Otherwise, if `/var/lib/fprint/validity-0088-pairing/print-key`
+   exists, encrypt that key (so existing encrypted prints stay readable),
+   else a new random one. The key goes through a pipe only, never a new
+   plaintext file:
 
        head -c 32 /dev/urandom |
          systemd-creds encrypt --name=validity0088-print-key \
@@ -100,14 +103,17 @@ credential is the real protection.
            /etc/credstore.encrypted/validity0088-print-key
 
    `--with-key=host` instead when `systemd-creds has-tpm2` does not report
-   full TPM support (on this machine: TPM present, `libtss2` libraries missing).
-2. Add `ImportCredential=validity0088-print-key` to the drop-in.
-3. Restart fprintd, check that a verify still works, then delete the old
-   `print-key` file (keys are tried by key id, so this is safe once the
-   credential holds the same key).
+   full TPM support (needs the `libtss2` libraries). The new credential is
+   decrypted once and compared before it replaces anything.
+2. Write the drop-in `fprintd.service.d/validity0088-print-key.conf` with
+   `ImportCredential=validity0088-print-key`.
+3. Restart fprintd and check that `/run/credentials/fprintd.service/` holds
+   the key.
 
-`--remove` keeps the credential file, so removing the drop-in never makes
-prints unreadable.
+`--drop-file-key` then deletes the old `print-key` file, but only if the
+credential decrypts to exactly the same key. `--remove` removes the drop-ins
+and keeps the credential file, so removing them never makes prints
+unreadable.
 
 Why these choices:
 
@@ -139,13 +145,48 @@ binding would stop that, at the price above.
 |---|---|
 | Print is format 2, its key is not available | verify/identify: `FP_DEVICE_ERROR_DATA_INVALID`, "print encrypted with key …, key not available; restore the key or enroll again". Identify skips that print and continues with the others. |
 | Key present, GCM tag check fails | same error, "print damaged or encrypted with another key". |
-| Credential configured but missing / undecryptable (TPM cleared) | **to be tested**: does `ImportCredential=` then start fprintd without the credential, or fail the unit? If it fails the unit, fprintd does not start and PAM falls back to the password; the README must say how to recover (`--remove`, re-enroll). |
+| Credential configured but missing | fprintd starts without it (tested); the driver falls back to the key file, encrypted prints without a matching key give the error above. |
+| Credential configured but undecryptable (TPM cleared, file damaged) | **fprintd does not start** (exit status 243/CREDENTIALS, tested). PAM falls back to the password. Recovery: README, *Troubleshooting*. See *Possible rework* below. |
 | No key anywhere at enroll | `print-key` file created, print encrypted. |
 | No key, and the file cannot be created (storage not writable, disk full) | print stored **unencrypted** (format 1) with a warning; enrolling the finger again later encrypts it. |
 | `print-key` exists but is not a valid key (wrong size, unreadable) | enroll fails; the file is never replaced, so prints made with the real key are not lost. |
 | `VALIDITY0088_PRINT_ENCRYPTION=0` | new prints in format 1 (plaintext). |
 
 Nothing is ever deleted automatically.
+
+## Credential behaviour of systemd 255 (tested 2026-10-20)
+
+Transient units (`systemd-run`) on this machine, systemd 255, TPM with
+`libtss2`, credential sealed `host+tpm2` without PCRs:
+
+| Credential | `ImportCredential=` | `LoadCredentialEncrypted=` (name only) |
+|---|---|---|
+| valid | starts, 32 B credential | starts, 32 B credential |
+| missing | starts, no credential | starts, no credential |
+| corrupt / undecryptable | **unit fails, exit 243** | **unit fails, exit 243** |
+
+The chosen setup accepts that an undecryptable credential stops fprintd (for
+all fingerprint readers) until the credential is moved away.
+
+### Possible rework: decrypt in a helper unit
+
+To keep fprintd starting when the credential cannot be decrypted:
+
+- Store the credential under a path systemd does not search on its own, e.g.
+  `/etc/validity0088/print-key.cred`.
+- A oneshot unit `validity0088-print-key.service` (`Before=fprintd.service`,
+  `RemainAfterExit=yes`, `UMask=0077`) runs
+  `systemd-creds decrypt --name=validity0088-print-key /etc/validity0088/print-key.cred /run/credstore/validity0088-print-key`
+  (after `mkdir -p -m 0700 /run/credstore`).
+- fprintd's drop-in: `Wants=` + `After=validity0088-print-key.service` and
+  `ImportCredential=validity0088-print-key`, which finds the plaintext key in
+  `/run/credstore/` — or nothing, which is fine (see table).
+
+If decryption fails only the helper unit fails; fprintd starts, other
+readers and unencrypted prints keep working, and encrypted prints report
+"key not available". Cost: one more unit, and a decrypted key copy in
+`/run` (RAM, root only) until reboot. Not done for now to keep the setup
+simple.
 
 ## Code layout
 
