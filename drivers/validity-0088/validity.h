@@ -268,6 +268,30 @@ typedef enum {
   VALIDITY_CAPTURE_MODE_ENROLL   = 0x23,
 } ValidityCaptureMode;
 
+/* Native calibration (validity-capture-builder.c). */
+#define VALIDITY_OP_READ_CONFIG   0x6f
+#define VALIDITY_CAL_ROWS         56u
+#define VALIDITY_CAL_STRIDE       152u   /* 8 B line header + 144 px */
+#define VALIDITY_CAL_ROW_HDR      8u
+#define VALIDITY_CAL_FRAME_LEN    (VALIDITY_CAL_ROWS * VALIDITY_CAL_STRIDE)
+#define VALIDITY_CAL_TRIM_LEN     56u
+#define VALIDITY_CAL_RAW_LINES    337u   /* 3 passes x 112 lines + 1 */
+#define VALIDITY_CAL_RAW_LEN      (VALIDITY_CAL_RAW_LINES * VALIDITY_CAL_STRIDE)
+
+typedef struct {
+  gboolean valid;
+  gboolean have_baseline;
+  guint8   trim[VALIDITY_CAL_TRIM_LEN];
+  guint8   frame[VALIDITY_CAL_FRAME_LEN];
+  guint8   baseline[VALIDITY_CAL_FRAME_LEN];
+} ValidityCalibration;
+
+typedef enum {
+  VALIDITY_CAL_PROG_CAL1,      /* first calibration capture, no frame data */
+  VALIDITY_CAL_PROG_CAL2,      /* second calibration capture, frame applied */
+  VALIDITY_CAL_PROG_CAPTURE,   /* normal capture program */
+} ValidityCalProgram;
+
 /* ===========================================================================
  * Session state
  * ========================================================================= */
@@ -440,6 +464,28 @@ guint8 *validity_capture_build (const ValidityRomInfo *rom_info,
                                 ValidityCaptureMode    mode,
                                 gsize                 *out_len,
                                 GError               **error);
+guint8  *validity_cal_build_program (const guint8              *tmpl,
+                                     gsize                      tmpl_len,
+                                     const ValidityCalibration *cal,
+                                     ValidityCalProgram         kind,
+                                     gsize                     *out_len,
+                                     GError                   **error);
+guint8  *validity_cal_build_from_template (const ValidityCalibration *cal,
+                                           ValidityCalProgram         kind,
+                                           gsize                     *out_len,
+                                           GError                   **error);
+gboolean validity_cal_parse_config_response (const guint8 *plain,
+                                             gsize         plain_len,
+                                             guint8       *trim,
+                                             GError      **error);
+gboolean validity_cal_frame_from_raw (const guint8 *raw,
+                                      gsize         raw_len,
+                                      guint8       *frame,
+                                      GError      **error);
+gboolean validity_cal_frame_plausible (const guint8 *frame, gdouble *mean_out);
+gboolean validity_cal_save (const ValidityCalibration *cal, GError **error);
+gboolean validity_cal_load (ValidityCalibration *cal, GError **error);
+void     validity_cal_dump (const gchar *name, const guint8 *data, gsize len);
 guint8 *validity_build_enroll_capture_command (FpDevice            *dev,
                                                ValidityCaptureMode  mode,
                                                gsize               *out_len,

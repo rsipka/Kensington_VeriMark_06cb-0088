@@ -41,6 +41,7 @@ struct _FpiDeviceValidity0088
   gint               enroll_completed;
   gint               enroll_attempts;
   gboolean           enroll_needs_scan_setup;
+  ValidityCalibration *cal_work;         /* non-NULL while calibrating */
 };
 
 G_DEFINE_TYPE (FpiDeviceValidity0088, fpi_device_validity_0088, FP_TYPE_DEVICE);
@@ -1571,8 +1572,126 @@ typedef enum {
   PREP_S_MSG4_2,
   PREP_S_5B_2,
   PREP_S_HOSTPART,
+  PREP_S_CAL_CHECK,
+  PREP_S_CAL_CONFIG,
+  PREP_S_CAL_PROG1,
+  PREP_S_CAL_RAW1,
+  PREP_S_CAL_PROG2,
+  PREP_S_CAL_RAW2,
+  PREP_S_CAL_SAVE,
   PREP_NUM_STATES,
 } ValiditySessionPrepState;
+
+/* --- Native sensor calibration (runs inside session prep) --------------- */
+
+static void
+validity_cal_config_cb (FpDevice     *device,
+                        FpiSsm       *ssm,
+                        const guint8 *plain,
+                        gsize         plain_len,
+                        gpointer      user_data)
+{
+  FpiDeviceValidity0088 *self = FPI_DEVICE_VALIDITY_0088 (device);
+  GError *err = NULL;
+
+  (void) user_data;
+  validity_cal_dump ("cal-config.bin", plain, plain_len);
+  if (!validity_cal_parse_config_response (plain, plain_len,
+                                           self->cal_work->trim, &err))
+    {
+      fpi_ssm_mark_failed (ssm, err);
+      return;
+    }
+  {
+    g_autofree gchar *hex = validity_hex_prefix (self->cal_work->trim,
+                                                 VALIDITY_CAL_TRIM_LEN, 16);
+    fp_info ("validity-0088: calibration: factory trim %s...", hex);
+  }
+  fpi_ssm_next_state (ssm);
+}
+
+static void
+validity_cal_raw_cb (FpiUsbTransfer *transfer,
+                     FpDevice       *device,
+                     gpointer        userdata,
+                     GError         *error)
+{
+  FpiDeviceValidity0088 *self = FPI_DEVICE_VALIDITY_0088 (device);
+  FpiSsm *ssm = userdata;
+  gboolean second = fpi_ssm_get_cur_state (ssm) == PREP_S_CAL_RAW2;
+  guint8 *dst = second ? self->cal_work->baseline : self->cal_work->frame;
+  GError *err = NULL;
+  gdouble mean = 0;
+
+  if (error)
+    {
+      fpi_ssm_mark_failed (ssm, error);
+      return;
+    }
+
+  validity_cal_dump (second ? "cal-raw-2.bin" : "cal-raw-1.bin",
+                     transfer->buffer, transfer->actual_length);
+  fp_dbg ("calibration: raw stream %d: %zd B", second ? 2 : 1,
+          transfer->actual_length);
+
+  if (!validity_cal_frame_from_raw (transfer->buffer, transfer->actual_length,
+                                    dst, &err))
+    {
+      fpi_ssm_mark_failed (ssm, err);
+      return;
+    }
+  if (!validity_cal_frame_plausible (dst, &mean))
+    {
+      fpi_ssm_mark_failed (ssm,
+          g_error_new (G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                       "calibration frame %d looks wrong (mean %.1f); keep "
+                       "the sensor clean and untouched and retry",
+                       second ? 2 : 1, mean));
+      return;
+    }
+  fp_info ("validity-0088: calibration: frame %d ok (mean %.1f)",
+           second ? 2 : 1, mean);
+  if (second)
+    self->cal_work->have_baseline = TRUE;
+  fpi_ssm_next_state (ssm);
+}
+
+static void
+validity_cal_send_program (FpiSsm *ssm, FpDevice *device, ValidityCalProgram kind)
+{
+  FpiDeviceValidity0088 *self = FPI_DEVICE_VALIDITY_0088 (device);
+  GError *err = NULL;
+  gsize len = 0;
+  g_autofree guint8 *cmd = validity_cal_build_from_template (self->cal_work,
+                                                             kind, &len, &err);
+
+  if (cmd == NULL)
+    {
+      fpi_ssm_mark_failed (ssm, err);
+      return;
+    }
+  validity_cal_dump (kind == VALIDITY_CAL_PROG_CAL1 ? "cal-prog-1.bin"
+                                                    : "cal-prog-2.bin",
+                     cmd, len);
+  validity_ssm_exchange (ssm, device,
+                         kind == VALIDITY_CAL_PROG_CAL1 ? "calibration-program-1"
+                                                        : "calibration-program-2",
+                         cmd, len, TRUE, NULL, NULL);
+}
+
+static void
+validity_cal_read_raw (FpiSsm *ssm, FpDevice *device)
+{
+  FpiUsbTransfer *transfer = fpi_usb_transfer_new (device);
+
+  /* 337 x 152 B is not a multiple of the packet size, so the device ends
+   * the stream with a short packet and the transfer completes. */
+  fpi_usb_transfer_fill_bulk (transfer, VALIDITY_EP_BULK_IN_ALT,
+                              VALIDITY_CAL_RAW_LEN);
+  fpi_usb_transfer_submit (transfer, VALIDITY_USB_RECV_TIMEOUT,
+                           fpi_device_get_cancellable (device),
+                           validity_cal_raw_cb, ssm);
+}
 
 static void
 validity_session_prep_run_state (FpiSsm   *ssm,
@@ -1661,6 +1780,69 @@ validity_session_prep_run_state (FpiSsm   *ssm,
       }
       break;
 
+    case PREP_S_CAL_CHECK:
+      {
+        FpiDeviceValidity0088 *self = FPI_DEVICE_VALIDITY_0088 (device);
+        ValidityCalibration cal;
+        gboolean force = g_strcmp0 (g_getenv ("VALIDITY0088_RECALIBRATE"), "1") == 0;
+
+        if (self->cal_work == NULL && !force && validity_cal_load (&cal, NULL))
+          {
+            fpi_ssm_mark_completed (ssm);
+            break;
+          }
+        if (self->cal_work != NULL)
+          {
+            /* Second pass through the prep tail after calibrating. */
+            g_clear_pointer (&self->cal_work, g_free);
+            fpi_ssm_mark_completed (ssm);
+            break;
+          }
+        fp_info ("validity-0088: calibrating the sensor - do not touch it");
+        self->cal_work = g_new0 (ValidityCalibration, 1);
+        fpi_ssm_next_state (ssm);
+      }
+      break;
+
+    case PREP_S_CAL_CONFIG:
+      {
+        guint8 cmd[9] = { VALIDITY_OP_READ_CONFIG, 0x00, 0x0e, 0, 0, 0, 0, 0, 0 };
+        validity_ssm_exchange (ssm, device, "calibration-read-config",
+                               cmd, sizeof (cmd), FALSE,
+                               validity_cal_config_cb, NULL);
+      }
+      break;
+
+    case PREP_S_CAL_PROG1:
+      validity_cal_send_program (ssm, device, VALIDITY_CAL_PROG_CAL1);
+      break;
+
+    case PREP_S_CAL_PROG2:
+      validity_cal_send_program (ssm, device, VALIDITY_CAL_PROG_CAL2);
+      break;
+
+    case PREP_S_CAL_RAW1:
+    case PREP_S_CAL_RAW2:
+      validity_cal_read_raw (ssm, device);
+      break;
+
+    case PREP_S_CAL_SAVE:
+      {
+        FpiDeviceValidity0088 *self = FPI_DEVICE_VALIDITY_0088 (device);
+        GError *err = NULL;
+
+        self->cal_work->valid = TRUE;
+        if (!validity_cal_save (self->cal_work, &err))
+          {
+            fpi_ssm_mark_failed (ssm, err);
+            break;
+          }
+        /* Re-run the end of the prep so the capture starts from the same
+         * state as without calibration. */
+        fpi_ssm_jump_to_state (ssm, PREP_S_CLEANUP_2);
+      }
+      break;
+
     case PREP_NUM_STATES:
       g_assert_not_reached ();
     }
@@ -1673,6 +1855,7 @@ validity_session_prep_done_cb (FpiSsm   *prep_ssm,
 {
   FpiDeviceValidity0088 *self = FPI_DEVICE_VALIDITY_0088 (device);
 
+  g_clear_pointer (&self->cal_work, g_free);
   if (error)
     fpi_ssm_mark_failed (self->task_ssm, error);
   else

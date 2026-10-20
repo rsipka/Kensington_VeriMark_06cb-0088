@@ -9,6 +9,8 @@
 #include "drivers_api.h"
 #include "validity.h"
 
+#include <sys/stat.h>
+
 #define VALIDITY_CAPTURE_COMMAND_LEN 18869u
 #define VALIDITY_CAPTURE_MODE_OFFSET 0x6d5u
 
@@ -1655,6 +1657,551 @@ validity_parse_rom_info_response (ValidityRomInfo *rom_info,
   return TRUE;
 }
 
+/* ===========================================================================
+ * Sensor calibration (native Linux replacement for the Windows driver's
+ * "CalibrationData" registry cache).
+ *
+ * Derived from synaWudfBioUsb66.dll (Windsor sensor 0x2449 path) and checked
+ * against a USB capture of a Windows calibration run:
+ *
+ *   1. the per-column trim (56 B) is a factory config block on the sensor,
+ *      id 0x80000003, read with wire opcode 0x6f (selector 0x0e);
+ *   2. "calibration program 1" (mode 0, flags 0x430, no frame data) makes
+ *      the sensor stream 337 raw lines of 152 B on bulk EP 0x82
+ *      (3 passes x 112 lines + 1 end line, each line = 8 B header + 144 px);
+ *      the calibration frame is the pair-average of pass 2;
+ *   3. "calibration program 2" = program 1 + the frame-derived records; its
+ *      stream gives the baseline frame the same way;
+ *   4. the normal capture program is the template with the four
+ *      device-specific pieces replaced (see validity_cal_build_program()).
+ *
+ * The result is cached in <storage dir>/calibration.bin.
+ * ========================================================================= */
+
+#define VCAL_FILE_MAGIC   0x4c414356u   /* "VCAL" */
+#define VCAL_FILE_VERSION 1u
+#define VCAL_TS_LEN       144u         /* sensor info +0x32 */
+#define VCAL_GAIN_NUM     10           /* sensor info +0x88 */
+#define VCAL_GAIN_DEN     4            /* sensor info +0x8a */
+#define VCAL_TRIM_BLOCK   0x80000003u
+
+typedef struct {
+  guint16 type;
+  gsize   off;      /* offset of the 4-byte record header */
+  guint16 len;      /* payload length */
+} VcalRec;
+
+static guint16
+vcal_le16 (const guint8 *p)
+{
+  return (guint16) (p[0] | (p[1] << 8));
+}
+
+static guint32
+vcal_le32 (const guint8 *p)
+{
+  return (guint32) p[0] | ((guint32) p[1] << 8) |
+         ((guint32) p[2] << 16) | ((guint32) p[3] << 24);
+}
+
+static void
+vcal_put16 (guint8 *p, guint16 v)
+{
+  p[0] = v & 0xff;
+  p[1] = v >> 8;
+}
+
+static void
+vcal_put32 (guint8 *p, guint32 v)
+{
+  p[0] = v & 0xff;
+  p[1] = (v >> 8) & 0xff;
+  p[2] = (v >> 16) & 0xff;
+  p[3] = (v >> 24) & 0xff;
+}
+
+static GArray *
+vcal_parse_records (const guint8 *prog, gsize len)
+{
+  GArray *recs = g_array_new (FALSE, FALSE, sizeof (VcalRec));
+  gsize o = 5;
+
+  while (o + 4 <= len)
+    {
+      VcalRec r = { vcal_le16 (prog + o), o, vcal_le16 (prog + o + 2) };
+      if (r.type == 0 && r.len == 0)
+        break;                          /* 4-byte zero pad at the end */
+      if (o + 4 + r.len > len)
+        break;
+      g_array_append_val (recs, r);
+      o += 4 + r.len;
+    }
+  return recs;
+}
+
+static const VcalRec *
+vcal_find (GArray *recs, guint16 type)
+{
+  for (guint i = 0; i < recs->len; i++)
+    if (g_array_index (recs, VcalRec, i).type == type)
+      return &g_array_index (recs, VcalRec, i);
+  return NULL;
+}
+
+static guint8
+vcal_scale (guint8 px)
+{
+  int v = ((int) px - 0x80) * VCAL_GAIN_NUM / VCAL_GAIN_DEN; /* C truncation, as the DLL */
+  if (v > 127) v = 127;
+  if (v < -128) v = -128;
+  return (guint8) (gint8) v;
+}
+
+/* FUN_180092c70 / FUN_180094100: [(bits-1)|8][min][0][0] + LSB-first fields. */
+static GByteArray *
+vcal_pack_trim (const guint8 *trim)
+{
+  GByteArray *out = g_byte_array_new ();
+  guint8 mn = 0xff, mx = 0, hdr[4] = { 0 };
+  guint bits = 1, nbytes;
+
+  for (guint i = 0; i < VALIDITY_CAL_TRIM_LEN; i++)
+    {
+      mn = MIN (mn, trim[i]);
+      mx = MAX (mx, trim[i]);
+    }
+  while ((1u << bits) <= (guint) (mx - mn))
+    bits++;
+
+  hdr[0] = (guint8) ((bits - 1) | 8);
+  hdr[1] = mn;
+  g_byte_array_append (out, hdr, 4);
+
+  nbytes = (VALIDITY_CAL_TRIM_LEN * bits + 7) / 8;
+  g_byte_array_set_size (out, 4 + nbytes);
+  memset (out->data + 4, 0, nbytes);
+  for (guint n = 0; n < VALIDITY_CAL_TRIM_LEN; n++)
+    for (guint k = 0; k < bits; k++)
+      if (((guint) (trim[n] - mn) >> k) & 1)
+        {
+          guint pos = n * bits + k;
+          out->data[4 + pos / 8] |= (guint8) (1u << (pos % 8));
+        }
+  return out;
+}
+
+/* 0x34 "Timeslot Table 2D": first 144 B from rows 18/28/38 (FUN_18008fb90). */
+static void
+vcal_fill_timeslot (guint8 *payload, const guint8 *frame)
+{
+  guint a = VCAL_TS_LEN / 3, b = VCAL_TS_LEN - 2 * a;
+
+  for (guint i = 0; i < VCAL_TS_LEN; i++)
+    {
+      guint row = i < a ? 18 : (i < a + b ? 28 : 38);
+      guint8 v = frame ? vcal_scale (frame[row * VALIDITY_CAL_STRIDE +
+                                           VALIDITY_CAL_ROW_HDR + i])
+                       : 0;
+      payload[i] = (v == 5) ? 4 : v;
+    }
+}
+
+/* Builds a 0x30 "Line Update" record: the template's non-frame entries
+ * (which carry their data in 0x43) plus, when @frame is given, the 36
+ * frame-derived entries (FUN_1800a0c60). */
+static gboolean
+vcal_build_line_update (GByteArray   *out,
+                        const guint8 *tmpl_payload,
+                        guint16       tmpl_len,
+                        const guint8 *frame,
+                        GError      **error)
+{
+  guint32 n = vcal_le32 (tmpl_payload);
+  guint groups = (VALIDITY_CAL_STRIDE - VALIDITY_CAL_ROW_HDR) / 4;
+  g_autoptr(GByteArray) ents = g_byte_array_new ();
+  g_autoptr(GByteArray) data = g_byte_array_new ();
+  guint count = 0;
+  guint8 tmp[8];
+
+  if (4 + (gsize) n * 8 > tmpl_len)
+    {
+      g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                   "template 0x30 record malformed");
+      return FALSE;
+    }
+
+  for (guint32 i = 0; i < n; i++)
+    {
+      const guint8 *e = tmpl_payload + 4 + i * 8;
+      guint32 kind = vcal_le32 (e), key = vcal_le32 (e + 4);
+      if (kind == 0xffffffffu && (key & 0xff000000u) == 0x85000000u)
+        continue;                                   /* frame entry */
+      if (((key >> 20) & 0xf) < 2)
+        {
+          g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                       "template 0x30 entry %u keeps inline data", i);
+          return FALSE;
+        }
+      g_byte_array_append (ents, e, 8);
+      count++;
+    }
+
+  if (frame != NULL)
+    for (guint g = 0; g < groups; g++)
+      {
+        vcal_put32 (tmp, 0xffffffffu);
+        vcal_put32 (tmp + 4, 0x85000000u | (g * 4));
+        g_byte_array_append (ents, tmp, 8);
+        count++;
+        for (guint r = 0; r < VALIDITY_CAL_ROWS; r++)
+          for (guint k = 0; k < 4; k++)
+            {
+              guint8 v = vcal_scale (frame[r * VALIDITY_CAL_STRIDE +
+                                           VALIDITY_CAL_ROW_HDR + 4 * g + k]);
+              g_byte_array_append (data, &v, 1);
+            }
+      }
+
+  vcal_put16 (tmp, 0x30);
+  vcal_put16 (tmp + 2, (guint16) (4 + ents->len + data->len));
+  vcal_put32 (tmp + 4, count);
+  g_byte_array_append (out, tmp, 8);
+  g_byte_array_append (out, ents->data, ents->len);
+  g_byte_array_append (out, data->data, data->len);
+  return TRUE;
+}
+
+/* 0x43 "Line Update Transform": [u32][56 B column map][trim x2][rest]. */
+static gboolean
+vcal_patch_transform (guint8 *payload, guint16 len, const guint8 *trim,
+                      GError **error)
+{
+  g_autoptr(GByteArray) packed = vcal_pack_trim (trim);
+  gsize pos = 4 + VALIDITY_CAL_ROWS;
+
+  if (pos + 2 * packed->len > len ||
+      (payload[pos] & 7) != (packed->data[0] & 7))
+    {
+      g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_SUPPORTED,
+                   "trim needs %u bits; template 0x43 layout differs",
+                   (packed->data[0] & 7) + 1u);
+      return FALSE;
+    }
+  memcpy (payload + pos, packed->data, packed->len);
+  memcpy (payload + pos + packed->len, packed->data, packed->len);
+  return TRUE;
+}
+
+static guint8 *
+vcal_finish (GByteArray *recs, guint16 lines, gsize *out_len)
+{
+  GByteArray *cmd = g_byte_array_new ();
+  guint8 hdr[5] = { VALIDITY_OP_CAPTURE_PROGRAM, 0, 0, 0, 0 };
+  static const guint8 pad[4] = { 0 };
+
+  vcal_put16 (hdr + 1, VALIDITY_CAL_STRIDE);
+  vcal_put16 (hdr + 3, lines);
+  g_byte_array_append (cmd, hdr, 5);
+  g_byte_array_append (cmd, recs->data, recs->len);
+  if (cmd->len % 64 == 0)                   /* avoid a ZLP (FUN_180083360) */
+    g_byte_array_append (cmd, pad, 4);
+  *out_len = cmd->len;
+  return g_byte_array_free (cmd, FALSE);
+}
+
+guint8 *
+validity_cal_build_program (const guint8              *tmpl,
+                            gsize                      tmpl_len,
+                            const ValidityCalibration *cal,
+                            ValidityCalProgram         kind,
+                            gsize                     *out_len,
+                            GError                   **error)
+{
+  g_autoptr(GArray) recs = vcal_parse_records (tmpl, tmpl_len);
+  g_autoptr(GByteArray) body = g_byte_array_new ();
+  const guint8 *frame = NULL;
+  gboolean cal_prog = (kind != VALIDITY_CAL_PROG_CAPTURE);
+  gboolean seen_17 = FALSE;
+  static const guint16 cal_tail[] = { 0x44, 0x30, 0x43 };
+
+  if (kind != VALIDITY_CAL_PROG_CAL1)
+    frame = cal->frame;
+
+  if (!vcal_find (recs, 0x34) || !vcal_find (recs, 0x30) ||
+      !vcal_find (recs, 0x43) || !vcal_find (recs, 0x17) ||
+      (!cal_prog && !vcal_find (recs, 0x48)))
+    {
+      g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                   "capture template lacks a required record");
+      return NULL;
+    }
+
+  for (guint i = 0; i < recs->len; i++)
+    {
+      const VcalRec *r = &g_array_index (recs, VcalRec, i);
+      const guint8 *src = tmpl + r->off;
+      gsize at = body->len;
+
+      if (cal_prog && seen_17)
+        break;                       /* calibration programs: base + 0x17 + tail */
+      if (r->type == 0x17)
+        seen_17 = TRUE;
+
+      if (r->type == 0x30)
+        {
+          if (!vcal_build_line_update (body, src + 4, r->len, frame, error))
+            return NULL;
+          continue;
+        }
+
+      g_byte_array_append (body, src, 4 + r->len);
+      if (r->type == 0x34 && r->len >= VCAL_TS_LEN)
+        vcal_fill_timeslot (body->data + at + 4, frame);
+      else if (r->type == 0x43 &&
+               !vcal_patch_transform (body->data + at + 4, r->len, cal->trim, error))
+        return NULL;
+      else if (r->type == 0x48)
+        {
+          if (r->len != 4 + VALIDITY_CAL_FRAME_LEN || !cal->have_baseline)
+            {
+              g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                           "no baseline frame for the 0x48 record");
+              return NULL;
+            }
+          memcpy (body->data + at + 8, cal->baseline, VALIDITY_CAL_FRAME_LEN);
+        }
+    }
+
+  if (cal_prog)
+    for (guint t = 0; t < G_N_ELEMENTS (cal_tail); t++)
+      {
+        const VcalRec *r = vcal_find (recs, cal_tail[t]);
+        gsize at = body->len;
+        if (r == NULL)
+          continue;
+        if (r->type == 0x30)
+          {
+            if (!vcal_build_line_update (body, tmpl + r->off + 4, r->len,
+                                         frame, error))
+              return NULL;
+            continue;
+          }
+        g_byte_array_append (body, tmpl + r->off, 4 + r->len);
+        if (r->type == 0x43 &&
+            !vcal_patch_transform (body->data + at + 4, r->len, cal->trim, error))
+          return NULL;
+      }
+
+  return vcal_finish (body, cal_prog ? VALIDITY_CAL_RAW_LINES : 0, out_len);
+}
+
+/* Reply to `6f 00 0e 00 00 00 00 00 00`: [status?][u32][u32 count] then
+ * entries {u32, u16 size, u8, u8, u32 id, data[size] padded to 4}
+ * (FUN_18005a610 / FUN_18005ed50). The leading status word is optional
+ * here so either framing parses. */
+static gboolean
+vcal_walk_blocks (const guint8 *p, gsize len, guint8 *trim)
+{
+  guint32 count;
+  gsize o = 8;
+  gboolean found = FALSE;
+
+  if (len < 8)
+    return FALSE;
+  count = vcal_le32 (p + 4);
+  if (count == 0 || count > 64)
+    return FALSE;
+  for (guint32 i = 0; i < count; i++)
+    {
+      guint16 size;
+      guint32 id;
+      if (o + 12 > len)
+        return FALSE;
+      size = vcal_le16 (p + o + 4);
+      id = vcal_le32 (p + o + 8);
+      if (o + 12 + size > len)
+        return FALSE;
+      if (id == VCAL_TRIM_BLOCK && size >= 4 + VALIDITY_CAL_TRIM_LEN)
+        {
+          memcpy (trim, p + o + 12 + 4, VALIDITY_CAL_TRIM_LEN);
+          found = TRUE;
+        }
+      o += 12 + ((size + 3u) & ~3u);
+    }
+  return found;
+}
+
+gboolean
+validity_cal_parse_config_response (const guint8 *plain,
+                                    gsize         plain_len,
+                                    guint8       *trim,
+                                    GError      **error)
+{
+  if ((plain_len >= 2 && vcal_walk_blocks (plain + 2, plain_len - 2, trim)) ||
+      vcal_walk_blocks (plain, plain_len, trim))
+    return TRUE;
+
+  g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+               "trim config block 0x%08x not found in %zu B reply",
+               VCAL_TRIM_BLOCK, plain_len);
+  return FALSE;
+}
+
+/* 337 raw lines -> 56-row frame: average of the two lines per row of
+ * pass 2 (header byte 3 == 2); the row header is taken from the first. */
+gboolean
+validity_cal_frame_from_raw (const guint8 *raw,
+                             gsize         raw_len,
+                             guint8       *frame,
+                             GError      **error)
+{
+  guint rows_seen = 0;
+
+  if (raw_len < VALIDITY_CAL_RAW_LEN)
+    {
+      g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                   "raw calibration stream too short: %zu B (want %u)",
+                   raw_len, VALIDITY_CAL_RAW_LEN);
+      return FALSE;
+    }
+
+  for (guint l = 0; l + 1 < VALIDITY_CAL_RAW_LINES; l++)
+    {
+      const guint8 *a = raw + l * VALIDITY_CAL_STRIDE;
+      guint nn = a[2], pass = a[3];
+      if (a[0] != 0x01 || a[1] != 0xfe)
+        {
+          g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                       "raw line %u: bad header %02x %02x", l, a[0], a[1]);
+          return FALSE;
+        }
+      if (pass != 2 || (nn & 1) == 0)
+        continue;
+      {
+        guint r = (nn - 1) / 2;
+        const guint8 *b = a + VALIDITY_CAL_STRIDE;
+        guint8 *dst = frame + r * VALIDITY_CAL_STRIDE;
+        if (r >= VALIDITY_CAL_ROWS || b[2] != nn + 1 || b[3] != 2)
+          {
+            g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                         "raw line %u: unexpected line order", l);
+            return FALSE;
+          }
+        memcpy (dst, a, VALIDITY_CAL_ROW_HDR);
+        for (guint x = VALIDITY_CAL_ROW_HDR; x < VALIDITY_CAL_STRIDE; x++)
+          dst[x] = (guint8) ((a[x] + b[x]) / 2);
+        rows_seen++;
+      }
+    }
+
+  if (rows_seen != VALIDITY_CAL_ROWS)
+    {
+      g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                   "raw stream: found %u of %u pass-2 rows",
+                   rows_seen, VALIDITY_CAL_ROWS);
+      return FALSE;
+    }
+  return TRUE;
+}
+
+/* Rough sanity check of a frame taken with nothing on the sensor. */
+gboolean
+validity_cal_frame_plausible (const guint8 *frame, gdouble *mean_out)
+{
+  guint64 sum = 0;
+  guint n = 0;
+
+  for (guint r = 0; r < VALIDITY_CAL_ROWS; r++)
+    for (guint x = VALIDITY_CAL_ROW_HDR; x < VALIDITY_CAL_STRIDE; x++, n++)
+      sum += frame[r * VALIDITY_CAL_STRIDE + x];
+  if (mean_out)
+    *mean_out = (gdouble) sum / n;
+  return (gdouble) sum / n > 96.0 && (gdouble) sum / n < 160.0;
+}
+
+static gchar *
+vcal_path (const gchar *name)
+{
+  g_autofree gchar *dir = validity_pairing_get_storage_dir ();
+  return g_build_filename (dir, name, NULL);
+}
+
+gboolean
+validity_cal_save (const ValidityCalibration *cal, GError **error)
+{
+  g_autoptr(GByteArray) buf = g_byte_array_new ();
+  g_autofree gchar *path = vcal_path ("calibration.bin");
+  guint8 hdr[12];
+
+  if (!validity_pairing_ensure_storage_dir (error))
+    return FALSE;
+  vcal_put32 (hdr, VCAL_FILE_MAGIC);
+  vcal_put32 (hdr + 4, VCAL_FILE_VERSION);
+  vcal_put32 (hdr + 8, cal->have_baseline ? 1 : 0);
+  g_byte_array_append (buf, hdr, sizeof (hdr));
+  g_byte_array_append (buf, cal->trim, VALIDITY_CAL_TRIM_LEN);
+  g_byte_array_append (buf, cal->frame, VALIDITY_CAL_FRAME_LEN);
+  g_byte_array_append (buf, cal->baseline, VALIDITY_CAL_FRAME_LEN);
+  if (!g_file_set_contents (path, (const gchar *) buf->data, buf->len, error))
+    return FALSE;
+  chmod (path, 0600);
+  fp_info ("validity-0088: calibration saved to %s", path);
+  return TRUE;
+}
+
+gboolean
+validity_cal_load (ValidityCalibration *cal, GError **error)
+{
+  g_autofree gchar *path = vcal_path ("calibration.bin");
+  g_autofree guint8 *buf = NULL;
+  gsize len = 0;
+  const gsize want = 12 + VALIDITY_CAL_TRIM_LEN + 2 * VALIDITY_CAL_FRAME_LEN;
+
+  memset (cal, 0, sizeof (*cal));
+  if (!g_file_get_contents (path, (gchar **) &buf, &len, error))
+    return FALSE;
+  if (len != want || vcal_le32 (buf) != VCAL_FILE_MAGIC ||
+      vcal_le32 (buf + 4) != VCAL_FILE_VERSION)
+    {
+      g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
+                   "%s: not a version-%u calibration file", path,
+                   VCAL_FILE_VERSION);
+      return FALSE;
+    }
+  cal->have_baseline = vcal_le32 (buf + 8) != 0;
+  memcpy (cal->trim, buf + 12, VALIDITY_CAL_TRIM_LEN);
+  memcpy (cal->frame, buf + 12 + VALIDITY_CAL_TRIM_LEN, VALIDITY_CAL_FRAME_LEN);
+  memcpy (cal->baseline, buf + 12 + VALIDITY_CAL_TRIM_LEN + VALIDITY_CAL_FRAME_LEN,
+          VALIDITY_CAL_FRAME_LEN);
+  cal->valid = cal->have_baseline;
+  return cal->valid;
+}
+
+/* Debug aid: keep raw device replies next to the calibration file. */
+void
+validity_cal_dump (const gchar *name, const guint8 *data, gsize len)
+{
+  g_autofree gchar *path = vcal_path (name);
+
+  if (validity_pairing_ensure_storage_dir (NULL) &&
+      g_file_set_contents (path, (const gchar *) data, len, NULL))
+    {
+      chmod (path, 0600);
+      fp_dbg ("validity-0088: wrote %zu B to %s", len, path);
+    }
+}
+
+guint8 *
+validity_cal_build_from_template (const ValidityCalibration *cal,
+                                  ValidityCalProgram         kind,
+                                  gsize                     *out_len,
+                                  GError                   **error)
+{
+  return validity_cal_build_program (validity_capture_identify_template,
+                                     sizeof (validity_capture_identify_template),
+                                     cal, kind, out_len, error);
+}
+
 guint8 *
 validity_capture_build (const ValidityRomInfo *rom_info,
                         ValidityCaptureMode    mode,
@@ -1683,6 +2230,33 @@ validity_capture_build (const ValidityRomInfo *rom_info,
                    rom_info->product, rom_info->u1);
       return NULL;
     }
+
+  {
+    ValidityCalibration cal;
+    g_autoptr(GError) cal_err = NULL;
+
+    if (validity_cal_load (&cal, &cal_err))
+      {
+        gsize len = 0;
+        cmd = validity_cal_build_from_template (&cal, VALIDITY_CAL_PROG_CAPTURE,
+                                                &len, error);
+        if (cmd == NULL)
+          return NULL;
+        if (len <= VALIDITY_CAPTURE_MODE_OFFSET)
+          {
+            g_free (cmd);
+            g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                         "calibrated capture program too short (%zu B)", len);
+            return NULL;
+          }
+        cmd[VALIDITY_CAPTURE_MODE_OFFSET] = (guint8) mode;
+        *out_len = len;
+        return cmd;
+      }
+    fp_warn ("validity-0088: no sensor calibration (%s); using the built-in "
+             "program, which was calibrated for a different sensor",
+             cal_err ? cal_err->message : "unknown");
+  }
 
   cmd = g_memdup2 (validity_capture_identify_template,
                    sizeof (validity_capture_identify_template));
