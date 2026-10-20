@@ -79,6 +79,8 @@ C="$W/etc/credstore.encrypted/validity0088-print-key"
 K="$W/var/lib/fprint/validity-0088-pairing/print-key"
 P="$W/var/lib/fprint/user/validity-0088/dev"
 
+# RC and OUTPUT are read by the conditions passed to check (eval)
+# shellcheck disable=SC2034
 run () {   # args...; sets RC and OUTPUT
     OUTPUT="$(PATH="$W/bin:$PATH" "${AS_ROOT[@]}" bash "$W/setup.sh" "$@" < /dev/null 2>&1)"
     RC=$?

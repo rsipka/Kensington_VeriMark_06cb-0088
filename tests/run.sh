@@ -77,7 +77,8 @@ build () {   # name sources... -- extra flags
     while [ $# -gt 0 ] && [ "$1" != "--" ]; do srcs+=("$1"); shift; done
     [ "${1:-}" = "--" ] && shift
     flags=("$@")
-    # shellcheck disable=SC2086
+    # word splitting of $GLIB and the pkg-config output is intended
+    # shellcheck disable=SC2086,SC2046
     if ! $CC -O2 -g -Wall -Wno-unused-parameter -Wno-deprecated-declarations \
             -I"$T" -I"$DRV" "${flags[@]}" -o "$OUT/$name" "${srcs[@]}" \
             $GLIB $(pkg-config --libs libcrypto) -lm 2>"$OUT/$name.build.log"; then
@@ -117,7 +118,8 @@ for t in test-print test-capture-builder test-pairing-key; do
                 "$DRV/validity-capture-builder.c" -- $LF \
                 && run_binary "$t" "$OUT/$t" ;;
         test-pairing-key)
-            build "$t" "$T/test-pairing-key.c" -- $LF -Wl,--unresolved-symbols=ignore-all \
+            build "$t" "$T/test-pairing-key.c" "$T/stubs.c" "$T/stubs-usb.c" \
+                "$DRV/validity-init-clean-slate.c" -- $LF \
                 && run_binary "$t" "$OUT/$t" ;;
     esac
 done

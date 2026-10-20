@@ -18,7 +18,7 @@ Run as a normal user (sudo is only used with `--install-deps`).
 
    | Needed | Debian / Ubuntu / Mint | RHEL / Fedora / Alma / Rocky |
    |---|---|---|
-   | git, meson ≥ the version libfprint asks for, ninja, C compiler, pkg-config, python3 | `git meson ninja-build build-essential pkg-config python3` | `git meson ninja-build gcc pkgconf-pkg-config python3` |
+   | git, meson ≥ the version libfprint asks for, ninja, C and C++ compiler (libfprint's meson project enables C++), pkg-config, python3 | `git meson ninja-build build-essential pkg-config python3` | `git meson ninja-build gcc gcc-c++ pkgconf-pkg-config python3` |
    | glib-2.0, gio-unix-2.0, gobject-2.0, gmodule-2.0 | `libglib2.0-dev` | `glib2-devel` |
    | gusb | `libgusb-dev` | `libgusb-devel` (RHEL 9/10 clones: CRB repository, like meson, ninja-build and gobject-introspection-devel) |
    | OpenSSL ≥ 3.0 | `libssl-dev` | `openssl-devel` |

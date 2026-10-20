@@ -4,8 +4,8 @@
  * validity-pretls-pair.c, OpenSSL 3 EVP API).
  *
  * The source file is included so its static helpers can be tested; the
- * device functions it also contains are never called (the test is linked
- * with unresolved symbols ignored).
+ * device functions it also contains are never called (their USB and storage
+ * calls resolve to stubs-usb.c and stubs.c).
  *
  * SPDX-License-Identifier: LGPL-2.1-or-later
  */

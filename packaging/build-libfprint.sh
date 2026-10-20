@@ -76,6 +76,7 @@ fi
 # check -> package, per family. Checks: "cmd:<tool>" or "pc:<pkg-config module>".
 declare -A DEB=(
     [cmd:git]=git [cmd:meson]=meson [cmd:ninja]=ninja-build [cmd:cc]=build-essential
+    [cmd:c++]=build-essential
     [cmd:pkg-config]=pkg-config [cmd:python3]=python3 [cmd:g-ir-scanner]=gobject-introspection
     [pc:glib-2.0]=libglib2.0-dev [pc:gio-unix-2.0]=libglib2.0-dev
     [pc:gobject-2.0]=libglib2.0-dev [pc:gmodule-2.0]=libglib2.0-dev
@@ -84,6 +85,7 @@ declare -A DEB=(
 )
 declare -A RPM=(
     [cmd:git]=git [cmd:meson]=meson [cmd:ninja]=ninja-build [cmd:cc]=gcc
+    [cmd:c++]=gcc-c++
     [cmd:pkg-config]=pkgconf-pkg-config [cmd:python3]=python3
     [cmd:g-ir-scanner]=gobject-introspection-devel
     [pc:glib-2.0]=glib2-devel [pc:gio-unix-2.0]=glib2-devel
@@ -91,7 +93,9 @@ declare -A RPM=(
     [pc:gusb]=libgusb-devel [pc:openssl]=openssl-devel
     [pc:gobject-introspection-1.0]=gobject-introspection-devel
 )
-CHECKS=(cmd:git cmd:meson cmd:ninja cmd:cc cmd:pkg-config cmd:python3 cmd:g-ir-scanner
+# libfprint's meson project also enables C++ (for an example), so a C++
+# compiler is needed even though the driver is C.
+CHECKS=(cmd:git cmd:meson cmd:ninja cmd:cc cmd:c++ cmd:pkg-config cmd:python3 cmd:g-ir-scanner
         pc:glib-2.0 pc:gio-unix-2.0 pc:gobject-2.0 pc:gmodule-2.0 pc:gusb pc:openssl
         pc:gobject-introspection-1.0)
 

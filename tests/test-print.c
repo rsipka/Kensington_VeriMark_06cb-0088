@@ -15,6 +15,7 @@
 #include "validity-printkey.h"
 #include "synth-finger.h"
 
+#include <glib/gstdio.h>
 #include <stdio.h>
 #include <sys/stat.h>
 #include <unistd.h>

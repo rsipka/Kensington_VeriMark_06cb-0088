@@ -217,7 +217,8 @@ if [ "$1" = "--encrypt-prints" ]; then
     else
         WITH=host
         systemd-creds has-tpm2 >/dev/null 2>&1 && WITH=host+tpm2
-        mkdir -p -m 0700 "$CRED_DIR"
+        mkdir -p "$CRED_DIR"
+        chmod 0700 "$CRED_DIR"
         TMP="$(mktemp "$CRED_DIR/.$CRED_NAME.XXXXXX")"
         trap 'rm -f -- "$TMP"' EXIT
         if [ -f "$KEY_FILE" ]; then
