@@ -1,0 +1,2 @@
+.gitignore# Scan dumps (VALIDITY0088_DUMP_SCANS) are biometric data: never commit them.
+*.pgm

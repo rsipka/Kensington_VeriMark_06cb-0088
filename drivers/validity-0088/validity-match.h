@@ -26,6 +26,14 @@ gint validity_tpl_best_score (const ValiditySiftFeatures *probe,
                               gint                       *best_idx,
                               GError                    **error);
 
+/* With VALIDITY0088_DUMP_SCANS=<dir>, save the 56 x 144 scan @tpl as
+ * <dir>/<time>-<action>-f<finger>.pgm (mode 600) for offline analysis.
+ * Biometric data: never commit these files. No-op when the variable is
+ * unset. */
+void validity_dump_scan (const guint8 *tpl,
+                         const gchar  *action,
+                         gint          finger);
+
 /* FALSE for a 56 x 144 scan with (almost) no ridge contrast. */
 gboolean validity_tpl_quality_ok (const guint8 *raw);
 

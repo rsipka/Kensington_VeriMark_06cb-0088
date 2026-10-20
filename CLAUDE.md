@@ -31,6 +31,9 @@ matching. No Windows driver data or tooling is needed at runtime.
     hostpart); `validity-pubkeys.c` – zeroed paired-identity placeholders.
   - `meson-fragment.txt` – lines to add to libfprint's meson files.
 - `packaging/setup-fprintd.sh` – fprintd systemd drop-in helper.
+- `tools/scan-eval.c` – offline matcher evaluation on scans saved with
+  `VALIDITY0088_DUMP_SCANS` (genuine/impostor scores, error rates per
+  threshold); build line in the file header.
 
 ## Build and test
 
@@ -152,6 +155,7 @@ depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
 | `VALIDITY0088_SIFT_THRESHOLD=n` | Match threshold (default 12) |
 | `VALIDITY0088_STORAGE_DIR=path` | Override storage directory |
 | `VALIDITY0088_PRINT_ENCRYPTION=0` | Store new prints unencrypted (format 1) |
+| `VALIDITY0088_DUMP_SCANS=dir` | Save every accepted scan as `<time>-<action>-f<finger>.pgm` (biometric data; `*.pgm` is git-ignored) |
 | `VALIDITY0088_VERIFY_MODE=enroll` | Verify with capture mode 0x23 |
 | `VALIDITY0088_LED_RESULT=0` | No LED feedback after verify |
 | `VALIDITY0088_NCC_THRESHOLD` | Obsolete (old correlation matcher) |
@@ -159,9 +163,9 @@ depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
 
 ## Rules for this repo
 
-- Never commit device-specific data: `calibration.bin`, `cal-*.bin`,
-  `test-storage.variant`, pairing keys, USB captures, or capture programs
-  taken from a Windows install.
+- Never commit device-specific or biometric data: `calibration.bin`,
+  `cal-*.bin`, `print-key`, `test-storage.variant`, pairing keys, scan dumps
+  (`*.pgm`), USB captures, or capture programs taken from a Windows install.
 - The capture skeleton in `validity-capture-builder.c` holds no sensor data;
   never put a full capture program (any sensor's) back into the source.
 - One logical change per commit; keep `meson-fragment.txt` in sync when files

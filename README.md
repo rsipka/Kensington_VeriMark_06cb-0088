@@ -179,6 +179,7 @@ To skip the autonomous ceremony (e.g., for debugging), set `VALIDITY0088_SKIP_AU
 | `VALIDITY0088_PRINT_ENCRYPTION=0` | Store new prints unencrypted. Encrypted prints can still be read while the key is there. |
 | `VALIDITY0088_SIFT_THRESHOLD=<n>` | Match threshold in consistent keypoints (default 12, allowed 4–10000). Higher means fewer false accepts and more false rejects. |
 | `VALIDITY0088_LED_RESULT=0` | No LED feedback (success pulse / red flash) after a verify or identify. |
+| `VALIDITY0088_DUMP_SCANS=<dir>` | Save every accepted scan (enroll, verify, identify) as a 56 × 144 PGM image named `<time>-<action>-f<finger>.pgm`, for offline evaluation with `tools/scan-eval.c`. These are images of your fingerprints: keep them private and delete them when done. |
 | `VALIDITY0088_VERIFY_MODE=enroll` | Capture verify scans with capture mode `0x23` (as enroll taps) instead of `0x02`. Debugging aid. |
 | `VALIDITY0088_TRY_HARD_RESET=1` | On the next `open()`, send the device's unpair sequence instead of opening it; then unplug, replug and unset the variable. Recovery tool. |
 | `VALIDITY0088_SKIP_AUTO_PAIR=1` | Disable the autonomous pairing on first open. `open()` will fail instead of self-pairing when no on-disk pair material is present. |

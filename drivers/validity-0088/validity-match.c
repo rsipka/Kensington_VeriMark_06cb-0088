@@ -185,6 +185,42 @@ validity_tpl_best_score (const ValiditySiftFeatures *probe, GVariant *data,
   return best;
 }
 
+void
+validity_dump_scan (const guint8 *tpl, const gchar *action, gint finger)
+{
+  const gchar *dir = g_getenv ("VALIDITY0088_DUMP_SCANS");
+  g_autoptr(GDateTime) now = NULL;
+  g_autofree gchar *stamp = NULL;
+  g_autofree gchar *path = NULL;
+  g_autofree gchar *hdr = NULL;
+  g_autoptr(GByteArray) pgm = NULL;
+  g_autoptr(GError) err = NULL;
+
+  if (dir == NULL || dir[0] == '\0')
+    return;
+  if (g_mkdir_with_parents (dir, 0700) != 0)
+    {
+      fp_warn ("validity-0088: cannot create scan dump dir %s", dir);
+      return;
+    }
+
+  now = g_date_time_new_now_local ();
+  stamp = g_date_time_format (now, "%Y%m%d-%H%M%S");
+  path = g_strdup_printf ("%s/%s.%03d-%s-f%d.pgm", dir, stamp,
+                          g_date_time_get_microsecond (now) / 1000,
+                          action, finger);
+  hdr = g_strdup_printf ("P5\n%d %d\n255\n", VTPL_W, VTPL_H);
+  pgm = g_byte_array_new ();
+  g_byte_array_append (pgm, (const guint8 *) hdr, strlen (hdr));
+  g_byte_array_append (pgm, tpl, VTPL_N);
+
+  if (!g_file_set_contents_full (path, (const gchar *) pgm->data, pgm->len,
+                                 G_FILE_SET_CONTENTS_CONSISTENT, 0600, &err))
+    fp_warn ("validity-0088: cannot save scan: %s", err->message);
+  else
+    fp_dbg ("scan saved to %s", path);
+}
+
 /* Reject scans with (almost) no ridge contrast, e.g. a partial/blank touch. */
 gboolean
 validity_tpl_quality_ok (const guint8 *raw)

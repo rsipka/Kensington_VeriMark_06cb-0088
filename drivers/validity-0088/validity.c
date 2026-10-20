@@ -1117,6 +1117,17 @@ validity_verify_run_state (FpiSsm   *ssm,
                                         "Not enough ridge detail, please retry"));
           return;
         }
+      if (fpi_device_get_current_action (device) == FPI_DEVICE_ACTION_IDENTIFY)
+        {
+          validity_dump_scan (self->captured_tpl, "identify", FP_FINGER_UNKNOWN);
+        }
+      else
+        {
+          FpPrint *enrolled = NULL;
+          fpi_device_get_verify_data (device, &enrolled);
+          validity_dump_scan (self->captured_tpl, "verify",
+                              fp_print_get_finger (enrolled));
+        }
       fpi_ssm_next_state (ssm);
       break;
 
@@ -1412,6 +1423,8 @@ validity_enroll_run_state (FpiSsm   *ssm,
         FpPrint *enroll_print = NULL;
 
         fpi_device_get_enroll_data (device, &enroll_print);
+        validity_dump_scan (self->captured_tpl, "enroll",
+                            fp_print_get_finger (enroll_print));
         if (self->enroll_templates == NULL)
           self->enroll_templates =
               g_ptr_array_new_with_free_func ((GDestroyNotify) g_bytes_unref);
