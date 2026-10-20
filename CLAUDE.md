@@ -173,7 +173,13 @@ depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
 
 ## Open items
 
-1. Field-test SIFT threshold; measure false accepts with more fingers/people.
+1. Field-test SIFT threshold. Done for one person (2026-10-20, all 10
+   fingers, `VALIDITY0088_DUMP_SCANS` + `tools/scan-eval.c`): 10 enroll +
+   10 verify taps per finger. Impostor scores (1800) max 7, p95 4; genuine
+   probes median 46, p5 20. Threshold 12: 0 false accepts (FAR < ~0.17 %,
+   95 %), 3 % false rejects — all three at noise level (2–6), i.e. probe
+   area not covered by the enroll taps (→ item 2); any threshold 8–15 gives
+   the same result. Still open: other people, probes from a later session.
 2. More enroll stages (10 → 15–20) and/or placement prompts for coverage.
    Findings (2026-10-20): fprintd maps enroll retries to fixed statuses
    (`enroll-finger-not-centered`, `enroll-retry-scan`, …), so a driver cannot

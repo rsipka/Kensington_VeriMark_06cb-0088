@@ -28,6 +28,9 @@
 #define W 56
 #define H 144
 #define MAX_FINGERS 11
+/* Impostor scores stay at or below this (1800 comparisons, 2026-10-20: max
+ * 7); a probe is only flagged as a possible wrong finger above it. */
+#define NOISE_MAX 9
 
 typedef struct
 {
@@ -216,7 +219,7 @@ main (int argc, char **argv)
                 }
             }
         }
-      if (own >= 0 && best_other > own)
+      if (own >= 0 && best_other > own && best_other > NOISE_MAX)
         printf ("check: %s scores %d vs its own finger but %d vs %s "
                 "(wrong finger tapped?)\n", s->name, own, best_other,
                 finger_names[best_other_f]);
