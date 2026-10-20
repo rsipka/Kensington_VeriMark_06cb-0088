@@ -1461,11 +1461,18 @@ validity_verify_run_state (FpiSsm   *ssm,
       {
         GError *err = NULL;
         gsize cmd_len;
+        /* VALIDITY0088_VERIFY_MODE=enroll selects capture mode 0x23 (used by
+         * enrollment taps 2..10) instead of 0x02; default is unchanged. */
+        guint8 vmode = (g_strcmp0 (g_getenv ("VALIDITY0088_VERIFY_MODE"),
+                                   "enroll") == 0) ?
+                       VALIDITY_CAPTURE_MODE_ENROLL :
+                       VALIDITY_CAPTURE_MODE_IDENTIFY;
         g_autofree guint8 *cmd =
             validity_build_enroll_capture_command (
-                device, VALIDITY_CAPTURE_MODE_IDENTIFY, &cmd_len, &err);
+                device, vmode, &cmd_len, &err);
         if (cmd == NULL) { fpi_ssm_mark_failed (ssm, err); return; }
-        fp_dbg ("verify: send capture program; tap finger when prompted");
+        fp_dbg ("verify: send capture program (mode 0x%02x); tap finger when prompted",
+                vmode);
         validity_ssm_exchange (ssm, device, "verify-capture",
                                cmd, cmd_len, TRUE,
                                validity_capture_response_cb, NULL);
