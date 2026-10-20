@@ -35,6 +35,8 @@ matching. No Windows driver data or tooling is needed at runtime.
 - `docs/` – technical documentation (index: `docs/README.md`): architecture,
   protocol, capture program and calibration, matcher, print encryption,
   evaluation, packaging. Keep it in sync with behaviour changes.
+- `tests/` – unit tests and the artificial-fingerprint generator
+  (`synth-finger.c`); runner `tests/run.sh`.
 - `tools/scan-eval.c` – offline matcher evaluation on scans saved with
   `VALIDITY0088_DUMP_SCANS` (genuine/impostor scores, error rates per
   threshold); build line in the file header.
@@ -55,6 +57,11 @@ Manually, in a libfprint checkout:
 2. Root `meson.build` → `drivers_info`: `'validity_0088' : { 'helper': ['openssl'] }`
    (older trees: `driver_helper_mapping`, `'validity_0088' : [ 'openssl' ]`).
 3. `meson setup builddir -Ddrivers=validity_0088 && ninja -C builddir`.
+
+Unit tests (no device): `tests/run.sh` after `packaging/build-libfprint.sh`
+(matcher on artificial fingerprints, print encryption and formats, capture
+program checksums, pairing key, setup-fprintd.sh in a sandbox; ~15 s). See
+`docs/testing.md`. Add a test with every behaviour change.
 
 Test without installing (B = `build/libfprint/builddir`, or a manual build):
 

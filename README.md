@@ -2,7 +2,7 @@
 
 An open-source `libfprint` driver for the Kensington VeriMark fingerprint key.
 
-Technical documentation (protocol, calibration, matcher, encryption, evaluation, packaging): [docs/](docs/README.md).
+Technical documentation (protocol, calibration, matcher, encryption, evaluation, packaging, tests): [docs/](docs/README.md). Tests without a device: `tests/run.sh` (see [docs/testing.md](docs/testing.md)).
 
 > **Install, plug in, works.**
 >
