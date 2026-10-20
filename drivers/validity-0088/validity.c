@@ -671,6 +671,12 @@ validity_get_image_flags (void)
 #define VTPL_HP_R     6
 #define VTPL_MIN_STD  15.0
 
+/* Minimum image correlation (0..1) for a verify to count as a match.
+ * Genuine taps score ~0.70-0.80, other fingers stayed below ~0.34.
+ * Raise it for fewer false accepts, lower it for fewer false rejects.
+ * Can be overridden at run time with VALIDITY0088_NCC_THRESHOLD. */
+#define VTPL_DEFAULT_THRESHOLD  0.50
+
 static gdouble
 validity_get_ncc_threshold (void)
 {
@@ -679,13 +685,13 @@ validity_get_ncc_threshold (void)
   gdouble value;
 
   if (env == NULL || env[0] == '\0')
-    return 0.45;
+    return VTPL_DEFAULT_THRESHOLD;
 
   value = g_ascii_strtod (env, &end);
   if (end == env || *end != '\0' || value <= 0.0 || value >= 1.0)
     {
       fp_warn ("ignoring invalid VALIDITY0088_NCC_THRESHOLD=%s", env);
-      return 0.45;
+      return VTPL_DEFAULT_THRESHOLD;
     }
   return value;
 }
