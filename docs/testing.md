@@ -28,7 +28,7 @@ about 15 seconds.
 weekly (to notice new libfprint releases):
 
 - **Lint:** shellcheck on all scripts, `tests/check-repo.sh` (driver sources
-  listed once in `meson-fragment.txt` and the README, SPDX lines, no device or
+  listed once in `meson-fragment.txt`, SPDX lines, no device or
   biometric data tracked, documentation links).
 - **Build and test** in containers: Ubuntu 24.04, Debian 12 and 13, Fedora
   42, Rocky Linux 9 and 10, each against the latest libfprint release; Ubuntu also

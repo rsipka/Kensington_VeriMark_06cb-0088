@@ -160,7 +160,7 @@ binding would stop that, at the price above.
 | Print is format 2, its key is not available | verify/identify: `FP_DEVICE_ERROR_DATA_INVALID`, "print encrypted with key …, key not available; restore the key or enroll again". Identify skips that print and continues with the others. |
 | Key present, GCM tag check fails | same error, "print damaged or encrypted with another key". |
 | Credential configured but missing | fprintd starts without it (tested); the driver falls back to the key file, encrypted prints without a matching key give the error above. |
-| Credential configured but undecryptable (TPM cleared, file damaged) | **fprintd does not start** (exit status 243/CREDENTIALS, tested). PAM falls back to the password. Recovery: README, *Troubleshooting*. See *Possible rework* below. |
+| Credential configured but undecryptable (TPM cleared, file damaged) | **fprintd does not start** (exit status 243/CREDENTIALS, tested). PAM falls back to the password. See *Recovery* and *Possible rework* below. |
 | No key anywhere at enroll | `print-key` file created, print encrypted. |
 | No key, and the file cannot be created (storage not writable, disk full) | print stored **unencrypted** (format 1) with a warning; enrolling the finger again later encrypts it. |
 | `print-key` exists but is not a valid key (wrong size, unreadable) | enroll fails; the file is never replaced, so prints made with the real key are not lost. |
@@ -203,6 +203,24 @@ readers and unencrypted prints keep working, and encrypted prints report
 "key not available". Cost: one more unit, and a decrypted key copy in
 `/run` (RAM, root only) until reboot. Not done for now to keep the setup
 simple.
+
+## Recovery
+
+When the credential can no longer be decrypted (TPM cleared in the firmware
+setup, by Windows "Clear TPM" or by some firmware updates), fprintd does not
+start and the journal shows status `243/CREDENTIALS`. The prints encrypted
+with that key are lost. To recover:
+
+```bash
+sudo mv /etc/credstore.encrypted/validity0088-print-key /etc/credstore.encrypted/validity0088-print-key.broken
+sudo systemctl restart fprintd
+fprintd-delete "$USER"
+fprintd-enroll "$USER"
+sudo packaging/setup-fprintd.sh --encrypt-prints
+```
+
+The new enrollment creates a new key file, which `--encrypt-prints` turns
+into a new credential; run `--drop-file-key` after a successful verify.
 
 ## Code layout
 

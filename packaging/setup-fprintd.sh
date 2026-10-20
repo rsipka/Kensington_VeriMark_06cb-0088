@@ -212,7 +212,7 @@ if [ "$1" = "--encrypt-prints" ]; then
     if [ -f "$CRED_FILE" ]; then
         # Never replace an existing key: prints encrypted with it would be lost.
         [ "$(cred_size "$CRED_FILE")" -eq 32 ] \
-            || die "$CRED_FILE exists but cannot be decrypted (TPM cleared?); see README, Troubleshooting"
+            || die "$CRED_FILE exists but cannot be decrypted (TPM cleared?); see docs/print-encryption.md, Recovery"
         say "using the existing credential $CRED_FILE"
     else
         WITH=host
@@ -247,7 +247,7 @@ if [ "$1" = "--encrypt-prints" ]; then
 # Passes the validity-0088 print encryption key to fprintd.
 # Credential: $CRED_FILE (no PCR binding)
 # If fprintd fails to start with status 243/CREDENTIALS, the credential can
-# no longer be decrypted (e.g. TPM cleared): see README, Troubleshooting.
+# no longer be decrypted (e.g. TPM cleared): see docs/print-encryption.md, Recovery.
 [Service]
 ImportCredential=$CRED_NAME
 # systemd decrypts the credential inside fprintd's device policy, which only

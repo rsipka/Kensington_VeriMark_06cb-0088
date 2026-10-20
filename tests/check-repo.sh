@@ -1,8 +1,7 @@
 #!/bin/bash
 #
 # check-repo.sh — repository consistency rules (see CLAUDE.md):
-#   - every driver .c file listed exactly once in meson-fragment.txt and in
-#     the README's meson list,
+#   - every driver .c file listed exactly once in meson-fragment.txt,
 #   - an SPDX licence line in every source and script,
 #   - no device-specific or biometric data tracked,
 #   - all relative links in the Markdown documentation resolve.
@@ -20,12 +19,12 @@ fail () { echo "FAIL $*"; FAILS=$((FAILS + 1)); }
 bad=""
 for f in drivers/validity-0088/*.c; do
     b="$(basename "$f")"
-    for doc in drivers/validity-0088/meson-fragment.txt README.md; do
+    for doc in drivers/validity-0088/meson-fragment.txt; do
         n="$(grep -c "validity-0088/$b'" "$doc")"
         [ "$n" -eq 1 ] || bad="$bad $b:$doc:$n"
     done
 done
-[ -z "$bad" ] && ok "every driver source listed once in meson-fragment.txt and README" \
+[ -z "$bad" ] && ok "every driver source listed once in meson-fragment.txt" \
               || fail "driver sources not listed exactly once:$bad"
 
 # 2. SPDX lines
