@@ -106,7 +106,13 @@ credential is the real protection.
    full TPM support (needs the `libtss2` libraries). The new credential is
    decrypted once and compared before it replaces anything.
 2. Write the drop-in `fprintd.service.d/validity0088-print-key.conf` with
-   `ImportCredential=validity0088-print-key`.
+   `ImportCredential=validity0088-print-key` and `DeviceAllow=/dev/tpmrm0 rw`.
+   systemd decrypts the credential inside the unit's device policy, and
+   fprintd's unit only allows the fingerprint device classes (USB, SPI,
+   hidraw, rtc); without the extra line the TPM open fails ("Operation not
+   permitted") and fprintd exits with 243. `LoadCredentialEncrypted=` is
+   documented to add `/dev/tpmrm0` by itself; `ImportCredential=` in systemd
+   255 does not.
 3. Restart fprintd and check that `/run/credentials/fprintd.service/` holds
    the key.
 
@@ -157,7 +163,9 @@ Nothing is ever deleted automatically.
 ## Credential behaviour of systemd 255 (tested 2026-10-20)
 
 Transient units (`systemd-run`) on this machine, systemd 255, TPM with
-`libtss2`, credential sealed `host+tpm2` without PCRs:
+`libtss2`, credential sealed `host+tpm2` without PCRs. These units had no
+device policy; fprintd's has one, which is why the drop-in also needs
+`DeviceAllow=/dev/tpmrm0 rw`.
 
 | Credential | `ImportCredential=` | `LoadCredentialEncrypted=` (name only) |
 |---|---|---|

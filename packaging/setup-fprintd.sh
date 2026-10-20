@@ -133,6 +133,9 @@ if [ "$1" = "--encrypt-prints" ]; then
 # no longer be decrypted (e.g. TPM cleared): see README, Troubleshooting.
 [Service]
 ImportCredential=$CRED_NAME
+# systemd decrypts the credential inside fprintd's device policy, which only
+# lists the fingerprint devices; the TPM must be allowed too.
+DeviceAllow=/dev/tpmrm0 rw
 EOF
     chmod 0644 "$KEY_DROPIN"
     systemctl daemon-reload
