@@ -243,9 +243,9 @@ depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
    encrypted print; the new options on the real system. The helper unit
    (2026-10-20) replaced importing the encrypted credential into fprintd,
    which needed `DeviceAllow=/dev/tpmrm0 rw` and stopped fprintd (exit 243)
-   when the credential could not be decrypted; the helper design was tested
-   with transient units, the script in the sandbox only. Not yet checked:
-   migration and verify through the helper on the real system.
+   when the credential could not be decrypted; tested with transient units,
+   then on the real system: migration from `/etc/credstore.encrypted/`,
+   helper active, `fprintd-verify` matched an existing encrypted print.
 4. Optional k-of-n rule (require ≥2 templates above a lower threshold).
    Probably unnecessary: wrong fingers never exceeded 7 (item 1), so there
    is no false-accept problem to fix, and k-of-n would raise false rejects.
