@@ -44,6 +44,10 @@ The same jobs run locally with podman or docker before pushing:
 .github/ci/run-local.sh fedora:42        # one image
 ```
 
+Last local run (2026-10-20): lint and all six distributions passed
+(Ubuntu 24.04, Debian 12 and 13, Fedora 42, Rocky Linux 9 and 10, libfprint
+v1.94.100), 80–150 s per distribution.
+
 `.github/ci/prepare-container.sh` holds the per-distribution preparation
 shared by both (certificates and git; on RHEL clones the CRB repository for
 `libgusb-devel` and `meson`).
