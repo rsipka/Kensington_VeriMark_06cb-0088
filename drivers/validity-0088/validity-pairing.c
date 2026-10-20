@@ -212,31 +212,6 @@ host_key_path (void)
   return g_build_filename (dir, "host-key.pem", NULL);
 }
 
-EVP_PKEY *
-validity_pairing_generate_host_keypair (GError **error)
-{
-  EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_id (EVP_PKEY_EC, NULL);
-  if (ctx == NULL)
-    {
-      g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                           "EVP_PKEY_CTX_new_id(EC) failed");
-      return NULL;
-    }
-  EVP_PKEY *pkey = NULL;
-  if (EVP_PKEY_keygen_init (ctx) <= 0
-      || EVP_PKEY_CTX_set_ec_paramgen_curve_nid (ctx, NID_X9_62_prime256v1) <= 0
-      || EVP_PKEY_keygen (ctx, &pkey) <= 0)
-    {
-      g_set_error_literal (error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                           "EVP_PKEY_keygen(P-256) failed");
-      EVP_PKEY_CTX_free (ctx);
-      if (pkey) EVP_PKEY_free (pkey);
-      return NULL;
-    }
-  EVP_PKEY_CTX_free (ctx);
-  return pkey;
-}
-
 gboolean
 validity_pairing_save_host_keypair (EVP_PKEY *pkey, GError **error)
 {
@@ -324,60 +299,6 @@ validity_pairing_get_pubkey_xy (EVP_PKEY *pkey,
   BN_free (bx);
   BN_free (by);
   return TRUE;
-}
-
-/* ===========================================================================
- * Synaptics custom client Certificate body (192 B)
- * ========================================================================= */
-
-#define VALIDITY_CLIENT_CERT_LEN          192
-#define VALIDITY_CLIENT_CERT_HEADER_LEN    13
-#define VALIDITY_CLIENT_CERT_X_OFFSET      16
-#define VALIDITY_CLIENT_CERT_Y_OFFSET      84
-#define VALIDITY_CLIENT_CERT_TRAILER_OFF  160
-#define VALIDITY_CLIENT_CERT_SIG_LEN       32
-
-guint8 *
-validity_pairing_build_client_certificate (
-    const guint8 host_pubkey_x_be[VALIDITY_ECC_COORD_LEN],
-    const guint8 host_pubkey_y_be[VALIDITY_ECC_COORD_LEN],
-    const guint8 signature_trailer[VALIDITY_CLIENT_CERT_SIG_LEN],
-    const guint8 session_random[4])
-{
-  guint8 *body = g_malloc0 (VALIDITY_CLIENT_CERT_LEN);
-
-  /* +0..+2: outer length = 0x0000b8 (= 184 BE) */
-  body[0] = 0x00; body[1] = 0x00; body[2] = 0xb8;
-
-  /* +3..+5: repeated length prefix */
-  body[3] = 0x00; body[4] = 0x00; body[5] = 0xb8;
-
-  /* +6..+9: per-session random */
-  memcpy (body + 6, session_random, 4);
-
-  /* +10..+15: fixed header suffix */
-  body[10] = 0x00; body[11] = 0x00; body[12] = 0x20;
-  body[13] = 0x00; body[14] = 0x00; body[15] = 0x00;
-
-  /* +16..+47: X coordinate, LITTLE-endian (reversed from input BE) */
-  for (gsize i = 0; i < VALIDITY_ECC_COORD_LEN; i++)
-    body[VALIDITY_CLIENT_CERT_X_OFFSET + i] =
-        host_pubkey_x_be[VALIDITY_ECC_COORD_LEN - 1 - i];
-
-  /* +48..+83: 36 B zero padding (already zero from g_malloc0) */
-
-  /* +84..+115: Y coordinate, LITTLE-endian */
-  for (gsize i = 0; i < VALIDITY_ECC_COORD_LEN; i++)
-    body[VALIDITY_CLIENT_CERT_Y_OFFSET + i] =
-        host_pubkey_y_be[VALIDITY_ECC_COORD_LEN - 1 - i];
-
-  /* +116..+159: 44 B zero padding (already zero) */
-
-  /* +160..+191: signature trailer */
-  memcpy (body + VALIDITY_CLIENT_CERT_TRAILER_OFF,
-          signature_trailer, VALIDITY_CLIENT_CERT_SIG_LEN);
-
-  return body;
 }
 
 /* ===========================================================================
@@ -652,29 +573,6 @@ validity_pairing_save_osb (const guint8 osb[VALIDITY_OSB_LEN],
 }
 
 gboolean
-validity_pairing_load_osb (guint8 out[VALIDITY_OSB_LEN],
-                            GError **error)
-{
-  g_autofree gchar *path = osb_path ();
-  g_autofree gchar *contents = NULL;
-  gsize len = 0;
-
-  if (!g_file_get_contents (path, &contents, &len, error))
-    return FALSE;
-
-  if (len != VALIDITY_OSB_LEN)
-    {
-      g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-                   "%s: expected %d B, got %zu", path,
-                   VALIDITY_OSB_LEN, len);
-      return FALSE;
-    }
-
-  memcpy (out, contents, VALIDITY_OSB_LEN);
-  return TRUE;
-}
-
-gboolean
 validity_pairing_has_osb (void)
 {
   g_autofree gchar *path = osb_path ();
@@ -695,27 +593,6 @@ enroll_hostpart_blob_path (void)
 {
   g_autofree gchar *dir = validity_pairing_get_storage_dir ();
   return g_build_filename (dir, "enroll-hostpart-blob", NULL);
-}
-
-gboolean
-validity_pairing_save_enroll_hostpart_blob (const guint8 *blob,
-                                            gsize         len,
-                                            GError      **error)
-{
-  if (blob == NULL || len != VALIDITY_ENROLL_HOSTPART_BLOB_LEN)
-    {
-      g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-                   "enroll hostpart blob must be %d B, got %zu",
-                   VALIDITY_ENROLL_HOSTPART_BLOB_LEN, len);
-      return FALSE;
-    }
-
-  if (!validity_pairing_ensure_storage_dir (error))
-    return FALSE;
-
-  g_autofree gchar *path = enroll_hostpart_blob_path ();
-  return write_file_restricted (path, blob,
-                                VALIDITY_ENROLL_HOSTPART_BLOB_LEN, error);
 }
 
 guint8 *

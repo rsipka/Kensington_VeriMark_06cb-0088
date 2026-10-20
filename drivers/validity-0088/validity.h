@@ -115,39 +115,12 @@ extern const guint8 validity_init_msg4_clean_slate_payload[VALIDITY_INIT_MSG4_CL
 gboolean validity_pairing_run_pretls_fresh_pair_ceremony (FpDevice *dev,
                                                           GError  **error);
 
-/* Enroll-time HOSTPART payload (10500 B). See validity-enroll-data.c.
- * The clean-slate variant is shipped but not auto-selected; the
- * 0x4302 probe in validity_send_plaintext_init would be the trigger
- * if a future 0088 ever returns non-zero from it. */
+/* Enroll-time HOSTPART payload (10500 B). See validity-enroll-data.c. */
 #define VALIDITY_ENROLL_HOSTPART_BLOB_LEN  10500
 extern const guint8 validity_enroll_hostpart_blob[VALIDITY_ENROLL_HOSTPART_BLOB_LEN];
-extern const guint8 validity_enroll_hostpart_blob_clean_slate[VALIDITY_ENROLL_HOSTPART_BLOB_LEN];
 
-/* ===========================================================================
- * Pinned attestation keys (embedded; raw bytes in validity-pubkeys.c).
- * Family-wide constants, same on every 0088 device.
- * ========================================================================= */
-
-/* RSA-2048: F4 exponent. Modulus is in validity_rsa_modulus_a / _b. */
-#define VALIDITY_RSA_EXPONENT     0x10001u
-#define VALIDITY_RSA_MODULUS_LEN  256
-
-extern const guint8 validity_rsa_modulus_a[VALIDITY_RSA_MODULUS_LEN];
-extern const guint8 validity_rsa_modulus_b[VALIDITY_RSA_MODULUS_LEN];
-extern const guint8 validity_rsa_modulus_a_sha256[32];
-extern const guint8 validity_rsa_modulus_b_sha256[32];
-
-/* ECC P-256 attestation key (the only entry in the default table). */
+/* P-256 coordinate length. */
 #define VALIDITY_ECC_COORD_LEN  32
-extern const guint8 validity_ecc_pubkey_x[VALIDITY_ECC_COORD_LEN];
-extern const guint8 validity_ecc_pubkey_y[VALIDITY_ECC_COORD_LEN];
-
-/* Maps a device-ID 3-byte prefix to a pinned key. Currently:
- *   prefix 06 03 01           -> Key B
- *   all other 06 xx xx        -> Key A
- *   06 07 00 (default table)  -> ECC key
- */
-const guint8 *validity_pick_rsa_modulus_for_device_id (const guint8 device_prefix[3]);
 
 /* ===========================================================================
  * Image record (device → host, inside an encrypted TLS app_data record)
@@ -418,20 +391,7 @@ guint8 *validity_build_client_hello (
     ValiditySession *session,
     gsize           *out_len);
 
-/* Build the identify/match command payload (wire byte 0x5e). The
- * "payload" arg is the encrypted template push (~18851 B). */
-guint8 *validity_build_identify_command (
-    guint8        flag1,
-    guint8        flag2,
-    guint16       field_a,
-    guint16       field_b,
-    guint16       field_c,
-    const guint8 *payload, guint32 payload_len,
-    gsize        *out_len);
-
-/* Single-byte wire commands. Both produce malloc'd 1-byte buffers
- * `[0x50]` and `[0x1A]` respectively; caller g_frees. */
-guint8 *validity_build_enroll_begin_command (gsize *out_len);
+/* Single-byte wire command `[0x1A]`; caller g_frees. */
 guint8 *validity_build_enroll_session_command (gsize *out_len);
 guint8 *validity_build_enroll_read_image_command (guint32 mode,
                                                   gsize  *out_len);
@@ -562,11 +522,6 @@ guint8 *validity_build_led_glow_command (guint8  r,
                                          guint16 timing_ms,
                                          gsize  *out_len);
 
-/* Parse a hex string into a 125-byte raw LED payload (for env-var override).
- * Returns g_malloc'd buffer or NULL on malformed input. */
-guint8 *validity_parse_led_raw_payload (const gchar *hex_str,
-                                        gsize       *out_len);
-
 /* ===========================================================================
  * Pairing / host identity (validity-pairing.c)
  * Storage: $XDG_DATA_HOME/libfprint/verimark-06cb-0088/{host-uuid,host-key.pem}
@@ -597,7 +552,6 @@ gboolean validity_pairing_load_host_uuid     (guint8 out[VALIDITY_HOST_UUID_LEN]
 /* Persistent host ECDSA P-256 keypair. EVP_PKEY * must be EVP_PKEY_free'd. */
 struct evp_pkey_st; /* forward decl; <openssl/evp.h> provides the real one */
 typedef struct evp_pkey_st EVP_PKEY;
-EVP_PKEY *validity_pairing_generate_host_keypair (GError **error);
 gboolean  validity_pairing_save_host_keypair     (EVP_PKEY *pkey, GError **error);
 EVP_PKEY *validity_pairing_load_host_keypair     (GError **error);
 
@@ -605,13 +559,6 @@ gboolean  validity_pairing_get_pubkey_xy (EVP_PKEY *pkey,
                                           guint8    x_be[VALIDITY_ECC_COORD_LEN],
                                           guint8    y_be[VALIDITY_ECC_COORD_LEN],
                                           GError  **error);
-
-/* Build the Synaptics 192-byte client Certificate body. Caller g_free's. */
-guint8 *validity_pairing_build_client_certificate (
-    const guint8 host_pubkey_x_be[VALIDITY_ECC_COORD_LEN],
-    const guint8 host_pubkey_y_be[VALIDITY_ECC_COORD_LEN],
-    const guint8 signature_trailer[VALIDITY_CLIENT_CERT_SIG_LEN],
-    const guint8 session_random[4]);
 
 /* Machine GUID continuity check (CeivMode::ValidateDatabase equivalent).
  * Checks whether the host UUID matches the one recorded during the
@@ -667,15 +614,10 @@ gboolean validity_pairing_derive_osb   (const guint8  host_part[16],
                                          gsize         tag4_len,
                                          guint8       *out_osb);
 gboolean validity_pairing_save_osb     (const guint8 osb[32], GError **error);
-gboolean validity_pairing_load_osb     (guint8 out[32], GError **error);
 gboolean validity_pairing_has_osb      (void);
 
-/* Enroll bootstrap wire-0x06 body cache.
- * Stores the 10500-byte body without the outer opcode byte; command builders
- * wrap it as 0x06 + body. See */
-gboolean validity_pairing_save_enroll_hostpart_blob (const guint8 *blob,
-                                                     gsize         len,
-                                                     GError      **error);
+/* Enroll bootstrap wire-0x06 body cache: the 10500-byte body without the
+ * outer opcode byte; command builders wrap it as 0x06 + body. */
 guint8 * validity_pairing_load_enroll_hostpart_blob (gsize   *out_len,
                                                      GError **error);
 gboolean validity_pairing_has_enroll_hostpart_blob  (void);
