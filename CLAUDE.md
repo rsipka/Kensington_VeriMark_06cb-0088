@@ -66,7 +66,8 @@ Contents: pairing keys (`cert-blob`, `host-key.pem`, `device-ecdh-pubkey.bin`),
   (56 columns × 144); the driver transposes to a 56×144 image.
 - The sensor does no on-chip matching (opcodes `5e`/`69` → status `0x0401`).
 - `51` returning 18 B with status `0x0007` = no image (tap too short/light).
-- `get_fw_info(fwext)` warning `0x04af` at open is harmless.
+- `get_fw_info(fwext)` returns `0x04af` at every open; harmless, logged at debug
+  level only (other non-zero values still warn).
 
 ## Calibration (`validity-capture-builder.c`)
 

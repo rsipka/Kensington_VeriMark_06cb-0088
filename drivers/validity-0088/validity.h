@@ -537,6 +537,7 @@ gboolean validity_send_cert_acquisition (FpDevice  *dev,
 #define VALIDITY_STATUS_OK                       0x0000u
 #define VALIDITY_STATUS_CERT_ALREADY_ISSUED      0x0401u  /* 0x4f rejection (wire bytes 01 04): device has an existing cert context */
 #define VALIDITY_STATUS_FLASH_ERASE_NOT_ALLOWED  0x04afu  /* 0x3f rejection: partition cannot be erased in current state */
+#define VALIDITY_STATUS_FWEXT_NOT_LOADED         0x04afu  /* get_fw_info(fwext) on every working unit; harmless */
 
 /* Internal encrypted app-data exchange helpers (validity.c). These route
  * through validity_usb_write(), which enforces the 06cb:0088 defensive

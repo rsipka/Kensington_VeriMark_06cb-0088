@@ -975,11 +975,10 @@ validity_send_plaintext_init (FpDevice *dev,
 
   /* 5. get_fw_info(0x02) - probe the fwext partition. python-validity
    * usb.py:89 sends this between INIT_MSG2 and INIT_MSG4 to decide
-   * whether to follow up with init_hardcoded_clean_slate. On 0088 the
-   * fwext partition is always present (every captured session shows
-   * status=0), so this probe is purely diagnostic: if it ever reports
-   * non-zero, the next handshake step will fail with bad_certificate
-   * or similar, and this log line tells the user why. */
+   * whether to follow up with init_hardcoded_clean_slate. Purely
+   * diagnostic here: working, paired 0088 units answer 0x04af on every
+   * open (0x4af is in the Windows driver's status table) and everything
+   * after it works, so only other non-zero values are worth a warning. */
   guint8 fw_probe[2] = { VALIDITY_OP_GET_FW_INFO, 0x02 };
   if (validity_send_wire (dev, fw_probe, sizeof (fw_probe),
                           rsp, sizeof (rsp), &rsp_len, NULL))
@@ -987,12 +986,12 @@ validity_send_plaintext_init (FpDevice *dev,
       if (rsp_len >= 2)
         {
           guint16 fw_status = validity_le16 (rsp);
-          if (fw_status != 0)
-            fp_warn ("validity-0088: get_fw_info(fwext) returned 0x%04x; "
-                     "fwext partition appears not loaded - subsequent "
-                     "init steps will likely fail. This 0088 driver does "
-                     "not ship a clean-slate INIT_MSG4 variant.",
-                     fw_status);
+          if (fw_status == 0 || fw_status == VALIDITY_STATUS_FWEXT_NOT_LOADED)
+            fp_dbg ("get_fw_info(fwext) status 0x%04x", fw_status);
+          else
+            fp_warn ("validity-0088: get_fw_info(fwext) returned unexpected "
+                     "status 0x%04x; if pairing or the TLS handshake fails "
+                     "next, this is the likely cause", fw_status);
         }
     }
   /* Probe failure is non-fatal: the driver works without it on
