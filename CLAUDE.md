@@ -247,3 +247,9 @@ depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
    Probably unnecessary: wrong fingers never exceeded 7 (item 1), so there
    is no false-accept problem to fix, and k-of-n would raise false rejects.
    Can be evaluated offline with the saved scans if needed.
+5. CI speed: `.github/ci/prepare-container.sh` runs a full `dnf upgrade
+   --refresh` on the RHEL family (added against a lagging Rocky mirror that
+   offered openssl-devel 3.5.8 without the matching openssl-libs). It makes
+   the Rocky jobs slow (Rocky 10: ~7 min in "Base packages" on GitHub).
+   `best=False` alone should cover the mirror lag: drop the upgrade, then
+   check both Rocky jobs with `.github/ci/run-local.sh` and on GitHub.
