@@ -12,6 +12,13 @@
  *      -Idrivers/validity-0088 $(pkg-config --cflags --libs glib-2.0) -lm
  * Run:
  *   ./scan-eval <dir> [threshold...]
+ *   ./scan-eval <dir> --stages N[,N...] [threshold] [runs]
+ *
+ * --stages simulates enrollments of N taps: for every finger, N of its scans
+ * (enroll and verify alike) are drawn at random as the print and the rest are
+ * probes; repeated over many random draws. Reports false rejects (probes vs
+ * their own finger) and false accepts (probes vs the other fingers' prints of
+ * the same size) at the threshold (default 12).
  *
  * The scans are biometric data: keep them out of the repository.
  *
@@ -119,6 +126,116 @@ count_ge (GArray *v, gint t)
   return c;
 }
 
+/* Random draws of N-tap prints from all scans of each finger. */
+static void
+simulate_stages (GPtrArray *scans, const gchar *list, gint threshold, gint runs)
+{
+  guint n = scans->len;
+  g_autofree gint *m = g_new (gint, (gsize) n * n);
+  GPtrArray *by_finger[MAX_FINGERS] = { NULL };
+  gchar **sizes = g_strsplit (list, ",", -1);
+  GRand *rnd = g_rand_new_with_seed (1);
+
+  /* scan index lists per finger */
+  for (guint i = 0; i < n; i++)
+    {
+      const Scan *s = g_ptr_array_index (scans, i);
+      if (s->finger <= 0)
+        continue;
+      if (by_finger[s->finger] == NULL)
+        by_finger[s->finger] = g_ptr_array_new ();
+      g_ptr_array_add (by_finger[s->finger], GUINT_TO_POINTER (i));
+    }
+
+  fprintf (stderr, "scoring %u x %u scan pairs...\n", n, n);
+  for (guint i = 0; i < n; i++)
+    for (guint j = 0; j < n; j++)
+      m[(gsize) i * n + j] = i == j ? 0 :
+          validity_sift_match (((Scan *) g_ptr_array_index (scans, i))->feat,
+                               ((Scan *) g_ptr_array_index (scans, j))->feat);
+
+  printf ("simulated enrollments, threshold %d, %d random draws per size\n", threshold, runs);
+  printf ("taps   false rejects            false accepts            max impostor\n");
+  for (gchar **sz = sizes; *sz != NULL; sz++)
+    {
+      gint taps = atoi (*sz);
+      glong gen = 0, fr = 0, imp = 0, fa = 0;
+      gint max_imp = 0;
+
+      for (gint r = 0; r < runs; r++)
+        {
+          /* in_print[i]: scan i belongs to the print of its finger */
+          g_autofree gboolean *in_print = g_new0 (gboolean, n);
+          gboolean ok = TRUE;
+
+          for (gint f = 1; f < MAX_FINGERS; f++)
+            {
+              GPtrArray *idx = by_finger[f];
+              if (idx == NULL)
+                continue;
+              if ((gint) idx->len <= taps)
+                {
+                  ok = FALSE;
+                  break;
+                }
+              /* partial Fisher-Yates draw of `taps` scans */
+              g_autofree guint *pool = g_new (guint, idx->len);
+              for (guint k = 0; k < idx->len; k++)
+                pool[k] = GPOINTER_TO_UINT (g_ptr_array_index (idx, k));
+              for (gint k = 0; k < taps; k++)
+                {
+                  guint pick = k + g_rand_int_range (rnd, 0, idx->len - k);
+                  guint tmp = pool[k];
+                  pool[k] = pool[pick];
+                  pool[pick] = tmp;
+                  in_print[pool[k]] = TRUE;
+                }
+            }
+          if (!ok)
+            {
+              printf ("%4d   not enough scans per finger\n", taps);
+              break;
+            }
+
+          for (guint p = 0; p < n; p++)
+            {
+              const Scan *ps = g_ptr_array_index (scans, p);
+              if (in_print[p] || ps->finger <= 0)
+                continue;
+              for (gint f = 1; f < MAX_FINGERS; f++)
+                {
+                  GPtrArray *idx = by_finger[f];
+                  gint best = 0;
+                  if (idx == NULL)
+                    continue;
+                  for (guint k = 0; k < idx->len; k++)
+                    {
+                      guint t = GPOINTER_TO_UINT (g_ptr_array_index (idx, k));
+                      if (in_print[t])
+                        best = MAX (best, m[(gsize) p * n + t]);
+                    }
+                  if (f == ps->finger)
+                    {
+                      gen++;
+                      fr += best < threshold;
+                    }
+                  else
+                    {
+                      imp++;
+                      fa += best >= threshold;
+                      max_imp = MAX (max_imp, best);
+                    }
+                }
+            }
+        }
+      if (gen > 0)
+        printf ("%4d   %6ld / %-7ld %5.2f%%   %6ld / %-8ld %6.4f%%   %3d\n", taps,
+                fr, gen, 100.0 * fr / gen, fa, imp, 100.0 * fa / imp, max_imp);
+    }
+  g_rand_free (rnd);
+  g_strfreev (sizes);
+}
+
 int
 main (int argc, char **argv)
 {
@@ -139,7 +256,9 @@ main (int argc, char **argv)
       fprintf (stderr, "usage: %s <scan dir> [threshold...]\n", argv[0]);
       return 2;
     }
-  if (argc > 2)
+  gboolean stages = argc > 3 && g_str_equal (argv[2], "--stages");
+
+  if (argc > 2 && !stages)
     for (nthr = 0; nthr < 16 && nthr + 2 < argc; nthr++)
       thresholds[nthr] = atoi (argv[nthr + 2]);
 
@@ -183,6 +302,13 @@ main (int argc, char **argv)
             prints[s->finger] = g_ptr_array_new ();
           g_ptr_array_add (prints[s->finger], s);
         }
+    }
+
+  if (stages)
+    {
+      simulate_stages (scans, argv[3], argc > 4 ? atoi (argv[4]) : 12,
+                       argc > 5 ? atoi (argv[5]) : 200);
+      return 0;
     }
 
   printf ("scans: %u\nprints:", scans->len);

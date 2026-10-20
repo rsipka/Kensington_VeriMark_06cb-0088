@@ -189,6 +189,13 @@ depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
    gate (reject ≥130, at most 2 in a row) was tried and dropped: two real
    enrollments never triggered it, and repeating a placement exactly on the
    7 × 3 mm sensor is hard even on purpose.
+   Simulation (2026-10-20, `scan-eval --stages`, 20 scans per finger of all
+   10 fingers, random draws): false rejects 1.2 % at 5 taps, 0.5 % at 10,
+   ~0.5 % at 12/15/18 — no gain above 10; wrong-finger max stays 7 at every
+   size. The live 10-tap enrollment gave 3 %: taps from two sittings cover
+   more than 10 in a row. Better lever than more stages: a second
+   enrollment pass that appends taps to the print (libfprint "update
+   print"; check fprintd support), not implemented.
 3. Encrypt stored prints: implemented (driver format 2 + key file,
    `setup-fprintd.sh --encrypt-prints` / `--drop-file-key` with an
    `ImportCredential=` credential, host+tpm2, no PCRs, plus
