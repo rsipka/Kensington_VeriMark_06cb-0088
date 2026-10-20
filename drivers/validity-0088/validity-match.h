@@ -1,0 +1,42 @@
+/*
+ * validity-match.h — matcher glue between validity.c and validity-sift.c.
+ *
+ * SPDX-License-Identifier: LGPL-2.1-or-later
+ */
+
+#pragma once
+
+#include <glib.h>
+
+#include "validity-sift.h"
+
+/* fpi-data format version of prints holding SIFT keypoints: (u aay). */
+#define VALIDITY_PRINT_FORMAT_SIFT 1u
+
+/* Match threshold in consistent keypoints (VALIDITY0088_SIFT_THRESHOLD). */
+gint validity_get_match_threshold (void);
+
+/* Best score of @probe over all templates of one print's fpi-data @data
+ * (either format), or -1 with @error set if nothing in it is usable.
+ * @best_idx gets the index of the best template. */
+gint validity_tpl_best_score (const ValiditySiftFeatures *probe,
+                              GVariant                   *data,
+                              gint                       *best_idx,
+                              GError                    **error);
+
+/* FALSE for a 56 x 144 scan with (almost) no ridge contrast. */
+gboolean validity_tpl_quality_ok (const guint8 *raw);
+
+/* NULL if the 0x51 reply holds an image, else a FP_DEVICE_RETRY error. */
+GError *validity_no_image_error (const guint8 *plain,
+                                 gsize         plain_len);
+
+/* Copy the image of a 0x51 reply into @tpl (VALIDITY_IMAGE_DATA_LEN B,
+ * row-major 56 x 144). */
+gboolean validity_store_template (guint8       *tpl,
+                                  const guint8 *plain,
+                                  GError      **error);
+
+/* fpi-data for an enrolled print from the serialised features of its
+ * taps (GBytes). Returns a floating reference. */
+GVariant *validity_tpl_print_data (GPtrArray *templates);

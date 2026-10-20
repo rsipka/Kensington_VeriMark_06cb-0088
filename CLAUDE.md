@@ -10,7 +10,10 @@ matching. No Windows driver data or tooling is needed at runtime.
 - `drivers/validity-0088/` – the driver. Copied or symlinked into a libfprint
   tree at `libfprint/drivers/validity-0088/`.
   - `validity.c` – device class, TLS session use, enroll/verify state machines,
-    session prep, calibration states, matcher glue.
+    session prep, calibration states.
+  - `validity-match.c/.h` – matcher glue: print (de)serialisation, scoring
+    against stored prints, match threshold, scan quality gate, image
+    extraction from `51` replies.
   - `validity-transport.c` – USB bulk read/write, encrypted app-data
     exchange, reply status checks, async exchange and interrupt-wait helpers
     for the state machines.
@@ -108,7 +111,7 @@ the frame matched within sensor noise.
 Unverified detail: one instruction byte in record `0x34` of program 1 may
 depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
 
-## Matcher (`validity-sift.c`, glue in `validity.c`)
+## Matcher (`validity-sift.c`, glue in `validity-match.c`)
 
 - SIFT: 2× upscale, local contrast normalisation, 3 octaves × 3 intervals,
   strongest 250 keypoints, 128-d descriptors.
