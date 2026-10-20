@@ -436,10 +436,7 @@ validity_pairing_run_pretls_fresh_pair_ceremony (FpDevice *dev, GError **error)
       goto out;
     }
   /* layout: status(2) + length LE u32(4) + cert body(184) */
-  guint32 cert_len = (guint32) resp[2]
-                   | ((guint32) resp[3] << 8)
-                   | ((guint32) resp[4] << 16)
-                   | ((guint32) resp[5] << 24);
+  guint32 cert_len = validity_le32 (resp + 2);
   if (cert_len != 184)
     fp_warn ("unexpected cert length in 0x4f response: %u (continuing anyway)",
              cert_len);

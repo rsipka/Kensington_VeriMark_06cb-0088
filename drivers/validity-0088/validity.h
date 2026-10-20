@@ -12,6 +12,58 @@
 
 G_DECLARE_FINAL_TYPE (FpiDeviceValidity0088, fpi_device_validity_0088, FPI, DEVICE_VALIDITY_0088, FpDevice)
 
+/* Hex dump of secrets and session keys for handshake debugging; only built
+ * with -DVALIDITY_TRACE_HANDSHAKE (validity-crypto.c). */
+#ifdef VALIDITY_TRACE_HANDSHAKE
+void validity_debug_hex (const char *label, const guint8 *data, gsize len);
+#else
+#define validity_debug_hex(label, data, len) \
+  G_STMT_START { } G_STMT_END
+#endif
+
+/* Unaligned integer access. Device replies and capture programs are
+ * little-endian; TLS record and handshake headers are big-endian. */
+static inline guint16
+validity_le16 (const guint8 *p)
+{
+  return (guint16) (p[0] | (p[1] << 8));
+}
+
+static inline guint32
+validity_le32 (const guint8 *p)
+{
+  return (guint32) p[0] | ((guint32) p[1] << 8) |
+         ((guint32) p[2] << 16) | ((guint32) p[3] << 24);
+}
+
+static inline guint16
+validity_be16 (const guint8 *p)
+{
+  return (guint16) ((p[0] << 8) | p[1]);
+}
+
+static inline guint32
+validity_be24 (const guint8 *p)
+{
+  return ((guint32) p[0] << 16) | ((guint32) p[1] << 8) | p[2];
+}
+
+static inline void
+validity_put_le16 (guint8 *p, guint16 v)
+{
+  p[0] = v & 0xff;
+  p[1] = v >> 8;
+}
+
+static inline void
+validity_put_le32 (guint8 *p, guint32 v)
+{
+  p[0] = v & 0xff;
+  p[1] = (v >> 8) & 0xff;
+  p[2] = (v >> 16) & 0xff;
+  p[3] = (v >> 24) & 0xff;
+}
+
 /* ===========================================================================
  * USB transport
  * ========================================================================= */

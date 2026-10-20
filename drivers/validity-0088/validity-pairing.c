@@ -1074,7 +1074,7 @@ flash_exchange_status (FpDevice     *dev,
       return FALSE;
     }
 
-  status = ((guint16) rsp[0]) | ((guint16) rsp[1] << 8);
+  status = validity_le16 (rsp);
   if (status == 0x0000 ||
       (allow_nothing_to_commit && status == 0x0491))
     {

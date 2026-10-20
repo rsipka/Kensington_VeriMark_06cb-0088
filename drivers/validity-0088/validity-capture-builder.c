@@ -1589,21 +1589,6 @@ static const guint8 validity_capture_identify_template[VALIDITY_CAPTURE_COMMAND_
   0x7f, 0x86, 0x83, 0x85, 0x91, 0x84, 0x6d, 0x86, 0x7a, 0x85, 0x6f, 0x84,
   0x78, 0x7e, 0x7c, 0x7c, 0x6e,};
 
-static guint16
-read_be16 (const guint8 *data)
-{
-  return ((guint16) data[0] << 8) | data[1];
-}
-
-static guint32
-read_le32 (const guint8 *data)
-{
-  return ((guint32) data[0]) |
-         ((guint32) data[1] << 8) |
-         ((guint32) data[2] << 16) |
-         ((guint32) data[3] << 24);
-}
-
 static gboolean
 validity_rom_info_is_supported_capture_family (const ValidityRomInfo *rom_info)
 {
@@ -1634,18 +1619,18 @@ validity_parse_rom_info_response (ValidityRomInfo *rom_info,
       return FALSE;
     }
 
-  if (read_be16 (plain) != VALIDITY_STATUS_OK)
+  if (validity_le16 (plain) != VALIDITY_STATUS_OK)
     {
       g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
-                   "RomInfo response status 0x%04x", read_be16 (plain));
+                   "RomInfo response status 0x%04x", validity_le16 (plain));
       return FALSE;
     }
 
   memset (rom_info, 0, sizeof (*rom_info));
   body = plain + 2;
 
-  rom_info->timestamp = read_le32 (body + 0x00);
-  rom_info->build     = read_le32 (body + 0x04);
+  rom_info->timestamp = validity_le32 (body + 0x00);
+  rom_info->build     = validity_le32 (body + 0x04);
   rom_info->major     = body[0x08];
   rom_info->minor     = body[0x09];
   rom_info->product   = body[0x0b];
@@ -1691,35 +1676,6 @@ typedef struct {
   guint16 len;      /* payload length */
 } VcalRec;
 
-static guint16
-vcal_le16 (const guint8 *p)
-{
-  return (guint16) (p[0] | (p[1] << 8));
-}
-
-static guint32
-vcal_le32 (const guint8 *p)
-{
-  return (guint32) p[0] | ((guint32) p[1] << 8) |
-         ((guint32) p[2] << 16) | ((guint32) p[3] << 24);
-}
-
-static void
-vcal_put16 (guint8 *p, guint16 v)
-{
-  p[0] = v & 0xff;
-  p[1] = v >> 8;
-}
-
-static void
-vcal_put32 (guint8 *p, guint32 v)
-{
-  p[0] = v & 0xff;
-  p[1] = (v >> 8) & 0xff;
-  p[2] = (v >> 16) & 0xff;
-  p[3] = (v >> 24) & 0xff;
-}
-
 static GArray *
 vcal_parse_records (const guint8 *prog, gsize len)
 {
@@ -1728,7 +1684,7 @@ vcal_parse_records (const guint8 *prog, gsize len)
 
   while (o + 4 <= len)
     {
-      VcalRec r = { vcal_le16 (prog + o), o, vcal_le16 (prog + o + 2) };
+      VcalRec r = { validity_le16 (prog + o), o, validity_le16 (prog + o + 2) };
       if (r.type == 0 && r.len == 0)
         break;                          /* 4-byte zero pad at the end */
       if (o + 4 + r.len > len)
@@ -1816,7 +1772,7 @@ vcal_build_line_update (GByteArray   *out,
                         const guint8 *frame,
                         GError      **error)
 {
-  guint32 n = vcal_le32 (tmpl_payload);
+  guint32 n = validity_le32 (tmpl_payload);
   guint groups = (VALIDITY_CAL_STRIDE - VALIDITY_CAL_ROW_HDR) / 4;
   g_autoptr(GByteArray) ents = g_byte_array_new ();
   g_autoptr(GByteArray) data = g_byte_array_new ();
@@ -1833,7 +1789,7 @@ vcal_build_line_update (GByteArray   *out,
   for (guint32 i = 0; i < n; i++)
     {
       const guint8 *e = tmpl_payload + 4 + i * 8;
-      guint32 kind = vcal_le32 (e), key = vcal_le32 (e + 4);
+      guint32 kind = validity_le32 (e), key = validity_le32 (e + 4);
       if (kind == 0xffffffffu && (key & 0xff000000u) == 0x85000000u)
         continue;                                   /* frame entry */
       if (((key >> 20) & 0xf) < 2)
@@ -1849,8 +1805,8 @@ vcal_build_line_update (GByteArray   *out,
   if (frame != NULL)
     for (guint g = 0; g < groups; g++)
       {
-        vcal_put32 (tmp, 0xffffffffu);
-        vcal_put32 (tmp + 4, 0x85000000u | (g * 4));
+        validity_put_le32 (tmp, 0xffffffffu);
+        validity_put_le32 (tmp + 4, 0x85000000u | (g * 4));
         g_byte_array_append (ents, tmp, 8);
         count++;
         for (guint r = 0; r < VALIDITY_CAL_ROWS; r++)
@@ -1862,9 +1818,9 @@ vcal_build_line_update (GByteArray   *out,
             }
       }
 
-  vcal_put16 (tmp, 0x30);
-  vcal_put16 (tmp + 2, (guint16) (4 + ents->len + data->len));
-  vcal_put32 (tmp + 4, count);
+  validity_put_le16 (tmp, 0x30);
+  validity_put_le16 (tmp + 2, (guint16) (4 + ents->len + data->len));
+  validity_put_le32 (tmp + 4, count);
   g_byte_array_append (out, tmp, 8);
   g_byte_array_append (out, ents->data, ents->len);
   g_byte_array_append (out, data->data, data->len);
@@ -1899,8 +1855,8 @@ vcal_finish (GByteArray *recs, guint16 lines, gsize *out_len)
   guint8 hdr[5] = { VALIDITY_OP_CAPTURE_PROGRAM, 0, 0, 0, 0 };
   static const guint8 pad[4] = { 0 };
 
-  vcal_put16 (hdr + 1, VALIDITY_CAL_STRIDE);
-  vcal_put16 (hdr + 3, lines);
+  validity_put_le16 (hdr + 1, VALIDITY_CAL_STRIDE);
+  validity_put_le16 (hdr + 3, lines);
   g_byte_array_append (cmd, hdr, 5);
   g_byte_array_append (cmd, recs->data, recs->len);
   if (cmd->len % 64 == 0)                   /* avoid a ZLP (FUN_180083360) */
@@ -2008,7 +1964,7 @@ vcal_walk_blocks (const guint8 *p, gsize len, guint8 *trim)
 
   if (len < 8)
     return FALSE;
-  count = vcal_le32 (p + 4);
+  count = validity_le32 (p + 4);
   if (count == 0 || count > 64)
     return FALSE;
   for (guint32 i = 0; i < count; i++)
@@ -2017,8 +1973,8 @@ vcal_walk_blocks (const guint8 *p, gsize len, guint8 *trim)
       guint32 id;
       if (o + 12 > len)
         return FALSE;
-      size = vcal_le16 (p + o + 4);
-      id = vcal_le32 (p + o + 8);
+      size = validity_le16 (p + o + 4);
+      id = validity_le32 (p + o + 8);
       if (o + 12 + size > len)
         return FALSE;
       if (id == VCAL_TRIM_BLOCK && size >= 4 + VALIDITY_CAL_TRIM_LEN)
@@ -2135,9 +2091,9 @@ validity_cal_save (const ValidityCalibration *cal, GError **error)
 
   if (!validity_pairing_ensure_storage_dir (error))
     return FALSE;
-  vcal_put32 (hdr, VCAL_FILE_MAGIC);
-  vcal_put32 (hdr + 4, VCAL_FILE_VERSION);
-  vcal_put32 (hdr + 8, cal->have_baseline ? 1 : 0);
+  validity_put_le32 (hdr, VCAL_FILE_MAGIC);
+  validity_put_le32 (hdr + 4, VCAL_FILE_VERSION);
+  validity_put_le32 (hdr + 8, cal->have_baseline ? 1 : 0);
   g_byte_array_append (buf, hdr, sizeof (hdr));
   g_byte_array_append (buf, cal->trim, VALIDITY_CAL_TRIM_LEN);
   g_byte_array_append (buf, cal->frame, VALIDITY_CAL_FRAME_LEN);
@@ -2160,15 +2116,15 @@ validity_cal_load (ValidityCalibration *cal, GError **error)
   memset (cal, 0, sizeof (*cal));
   if (!g_file_get_contents (path, (gchar **) &buf, &len, error))
     return FALSE;
-  if (len != want || vcal_le32 (buf) != VCAL_FILE_MAGIC ||
-      vcal_le32 (buf + 4) != VCAL_FILE_VERSION)
+  if (len != want || validity_le32 (buf) != VCAL_FILE_MAGIC ||
+      validity_le32 (buf + 4) != VCAL_FILE_VERSION)
     {
       g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
                    "%s: not a version-%u calibration file", path,
                    VCAL_FILE_VERSION);
       return FALSE;
     }
-  cal->have_baseline = vcal_le32 (buf + 8) != 0;
+  cal->have_baseline = validity_le32 (buf + 8) != 0;
   memcpy (cal->trim, buf + 12, VALIDITY_CAL_TRIM_LEN);
   memcpy (cal->frame, buf + 12 + VALIDITY_CAL_TRIM_LEN, VALIDITY_CAL_FRAME_LEN);
   memcpy (cal->baseline, buf + 12 + VALIDITY_CAL_TRIM_LEN + VALIDITY_CAL_FRAME_LEN,

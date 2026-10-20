@@ -155,7 +155,7 @@ validity_read_app_plaintext (FpDevice  *dev,
       return FALSE;
     }
 
-  guint16 body_len = ((guint16) rsp[3] << 8) | rsp[4];
+  guint16 body_len = validity_be16 (rsp + 3);
   if ((gsize) body_len + 5 > rsp_len)
     {
       g_set_error (error, G_IO_ERROR, G_IO_ERROR_INVALID_DATA,
@@ -244,7 +244,7 @@ validity_validate_status (const gchar  *label,
     }
 
   /* Little-endian: matches flash_exchange_status() and the Windows driver. */
-  guint16 status = ((guint16) rsp[0]) | ((guint16) rsp[1] << 8);
+  guint16 status = validity_le16 (rsp);
   if (status == 0x0000)
     return TRUE;
 
@@ -452,14 +452,8 @@ validity_send_host_part_read (FpDevice  *dev,
   cmd[0] = 0x40;
   cmd[1] = tag1;
   cmd[2] = tag2;
-  cmd[5] =  val1        & 0xff;
-  cmd[6] = (val1 >> 8)  & 0xff;
-  cmd[7] = (val1 >> 16) & 0xff;
-  cmd[8] = (val1 >> 24) & 0xff;
-  cmd[9] =  val2        & 0xff;
-  cmd[10] = (val2 >> 8)  & 0xff;
-  cmd[11] = (val2 >> 16) & 0xff;
-  cmd[12] = (val2 >> 24) & 0xff;
+  validity_put_le32 (cmd + 5, val1);
+  validity_put_le32 (cmd + 9, val2);
 
   return validity_exchange_app_plaintext (dev, cmd, 13,
                                           out_data, out_data_len,
@@ -495,8 +489,8 @@ validity_find_tlv (const guint8 *data,
   gsize off = 0;
   while (off + 4 <= data_len)
     {
-      guint16 tag    = ((guint16) data[off] | ((guint16) data[off + 1] << 8));
-      guint16 length = ((guint16) data[off + 2] | ((guint16) data[off + 3] << 8));
+      guint16 tag    = validity_le16 (data + off);
+      guint16 length = validity_le16 (data + off + 2);
 
       if (off + 4 + (gsize) length > data_len)
         return FALSE;
@@ -556,7 +550,7 @@ validity_send_cert_acquisition (FpDevice  *dev,
       return FALSE;
     }
 
-  guint16 status = ((guint16) response[0]) | ((guint16) response[1] << 8);
+  guint16 status = validity_le16 (response);
   if (out_status != NULL)
     *out_status = status;
   if (status != 0x0000)
@@ -776,7 +770,7 @@ validity_no_image_error (const guint8 *plain, gsize plain_len)
   g_autofree gchar *hex = NULL;
 
   if (plain_len == VALIDITY_IMAGE_RECORD_LEN &&
-      (plain[0] | (plain[1] << 8)) == 0)
+      validity_le16 (plain) == 0)
     return NULL;
 
   hex = validity_hex_prefix (plain, plain_len, 32);
@@ -992,7 +986,7 @@ validity_send_plaintext_init (FpDevice *dev,
     {
       if (rsp_len >= 2)
         {
-          guint16 fw_status = (guint16) rsp[0] | ((guint16) rsp[1] << 8);
+          guint16 fw_status = validity_le16 (rsp);
           if (fw_status != 0)
             fp_warn ("validity-0088: get_fw_info(fwext) returned 0x%04x; "
                      "fwext partition appears not loaded - subsequent "
@@ -1101,7 +1095,7 @@ validity_async_recv_cb (FpiUsbTransfer *transfer,
       return;
     }
 
-  body_len = ((guint16) rsp[3] << 8) | rsp[4];
+  body_len = validity_be16 (rsp + 3);
   if ((gsize) body_len + 5 > rsp_len)
     {
       fpi_ssm_mark_failed (ctx->ssm,
