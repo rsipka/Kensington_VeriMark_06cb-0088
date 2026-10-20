@@ -1436,6 +1436,11 @@ validity_enroll_run_state (FpiSsm   *ssm,
           g_ptr_array_add (self->enroll_templates,
                            validity_sift_serialize (feat));
         }
+        /* Keep a print to the newest VALIDITY_PRINT_MAX_TAPS taps. */
+        if (self->enroll_templates->len > VALIDITY_PRINT_MAX_TAPS)
+          g_ptr_array_remove_range (self->enroll_templates, 0,
+                                    self->enroll_templates->len -
+                                    VALIDITY_PRINT_MAX_TAPS);
         self->enroll_completed++;
         fp_dbg ("enroll stage %d/%d accepted",
                 self->enroll_completed, VALIDITY_MAX_ENROLL_STAGES);
@@ -1741,9 +1746,32 @@ validity_enroll (FpDevice *device)
 
   fpi_device_get_enroll_data (device, &enroll_print);
   g_object_get (enroll_print, "fpi-type", &print_type, NULL);
+  g_clear_pointer (&self->enroll_templates, g_ptr_array_unref);
+
+  /* Print update (FP_DEVICE_FEATURE_UPDATE_PRINT): libfprint passes an
+   * existing print as template; its taps are kept and the new ones added,
+   * so enrolling a finger again in another sitting widens its coverage. */
+  if (print_type != FPI_PRINT_UNDEFINED)
+    {
+      g_autoptr(GVariant) data = NULL;
+      GError *err = NULL;
+
+      g_object_get (enroll_print, "fpi-data", &data, NULL);
+      if (data != NULL)
+        {
+          self->enroll_templates = validity_tpl_load (
+              data, fp_print_get_device_id (enroll_print), &err);
+          if (self->enroll_templates == NULL)
+            {
+              fpi_device_enroll_complete (device, NULL, err);
+              return;
+            }
+          fp_info ("validity-0088: updating a print with %u taps; adding %d",
+                   self->enroll_templates->len, VALIDITY_MAX_ENROLL_STAGES);
+        }
+    }
   if (print_type != FPI_PRINT_RAW)
     fpi_print_set_type (enroll_print, FPI_PRINT_RAW);
-  g_clear_pointer (&self->enroll_templates, g_ptr_array_unref);
 
   g_clear_object (&self->stage_print);
   self->enroll_completed = 0;
@@ -1846,4 +1874,5 @@ fpi_device_validity_0088_class_init (FpiDeviceValidity0088Class *klass)
   dev_class->cancel  = validity_cancel;
 
   fpi_device_class_auto_initialize_features (dev_class);
+  dev_class->features |= FP_DEVICE_FEATURE_UPDATE_PRINT;
 }

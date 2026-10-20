@@ -34,6 +34,12 @@ void validity_dump_scan (const guint8 *tpl,
                          const gchar  *action,
                          gint          finger);
 
+/* Taps of an existing print (any format) as serialised keypoints (GBytes),
+ * for extending it in an enrollment; NULL with @error set if unreadable. */
+GPtrArray *validity_tpl_load (GVariant    *data,
+                              const gchar *device_id,
+                              GError     **error);
+
 /* FALSE for a 56 x 144 scan with (almost) no ridge contrast. */
 gboolean validity_tpl_quality_ok (const guint8 *raw);
 

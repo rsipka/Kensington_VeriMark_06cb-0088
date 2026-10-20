@@ -81,6 +81,9 @@ validity_put_le32 (guint8 *p, guint32 v)
 
 #define VALIDITY_MAX_RECV_LEN          24576  /* > 18960 to fit per-attempt records */
 #define VALIDITY_MAX_ENROLL_STAGES        10
+/* Upper limit of taps kept in one print (print updates add 10 each time;
+ * ~33 KB per tap). The oldest taps are dropped first. */
+#define VALIDITY_PRINT_MAX_TAPS           30
 
 /* ===========================================================================
  * Protocol constants

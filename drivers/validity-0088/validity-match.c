@@ -119,47 +119,87 @@ validity_tpl_features (GVariant *child, gboolean legacy_raw)
 /* Returns the best keypoint score of @probe over all templates of one
  * print (-1 if the print holds nothing usable) and the index of that
  * template. */
+/* The template array (aay) of a print's fpi-data, any format; *legacy is
+ * set for prints of raw scans (keypoints still to be computed). */
+static GVariant *
+validity_tpl_array (GVariant *data, const gchar *device_id, gboolean *legacy,
+                    GError **error)
+{
+  GVariant *templates = NULL;
+
+  *legacy = FALSE;
+  if (validity_print_is_encrypted (data))
+    return validity_print_decrypt (data, device_id, error);
+
+  if (g_variant_is_of_type (data, G_VARIANT_TYPE ("(uaay)")))
+    {
+      guint32 format;
+      g_variant_get (data, "(u@aay)", &format, &templates);
+      if (format != VALIDITY_PRINT_FORMAT_SIFT)
+        {
+          g_variant_unref (templates);
+          g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID,
+                       "Stored print uses unknown format %u; please enroll again",
+                       format);
+          return NULL;
+        }
+      return templates;
+    }
+  if (g_variant_is_of_type (data, G_VARIANT_TYPE ("aay")))
+    {
+      *legacy = TRUE;
+      fp_dbg ("print stores raw scans (older driver); computing keypoints now");
+      return g_variant_ref (data);
+    }
+  g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID,
+               "Stored print has no templates; please enroll again");
+  return NULL;
+}
+
+GPtrArray *
+validity_tpl_load (GVariant *data, const gchar *device_id, GError **error)
+{
+  g_autoptr(GVariant) templates = NULL;
+  g_autoptr(GPtrArray) out = NULL;
+  gboolean legacy;
+  gsize count;
+
+  templates = validity_tpl_array (data, device_id, &legacy, error);
+  if (templates == NULL)
+    return NULL;
+  out = g_ptr_array_new_with_free_func ((GDestroyNotify) g_bytes_unref);
+  count = g_variant_n_children (templates);
+  for (gsize i = 0; i < count; i++)
+    {
+      g_autoptr(GVariant) child = g_variant_get_child_value (templates, i);
+      g_autoptr(ValiditySiftFeatures) tpl = validity_tpl_features (child, legacy);
+
+      if (tpl != NULL)
+        g_ptr_array_add (out, validity_sift_serialize (tpl));
+    }
+  if (out->len == 0)
+    {
+      g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID,
+                   "Stored print has no usable templates; please enroll again");
+      return NULL;
+    }
+  return g_steal_pointer (&out);
+}
+
 gint
 validity_tpl_best_score (const ValiditySiftFeatures *probe, GVariant *data,
                          const gchar *device_id, gint *best_idx,
                          GError **error)
 {
   g_autoptr(GVariant) templates = NULL;
-  gboolean legacy = FALSE;
+  gboolean legacy;
   gsize count;
   gint best = -1;
 
   *best_idx = -1;
-  if (validity_print_is_encrypted (data))
-    {
-      templates = validity_print_decrypt (data, device_id, error);
-      if (templates == NULL)
-        return -1;
-    }
-  else if (g_variant_is_of_type (data, G_VARIANT_TYPE ("(uaay)")))
-    {
-      guint32 format;
-      g_variant_get (data, "(u@aay)", &format, &templates);
-      if (format != VALIDITY_PRINT_FORMAT_SIFT)
-        {
-          g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID,
-                       "Stored print uses unknown format %u; please enroll again",
-                       format);
-          return -1;
-        }
-    }
-  else if (g_variant_is_of_type (data, G_VARIANT_TYPE ("aay")))
-    {
-      templates = g_variant_ref (data);
-      legacy = TRUE;
-      fp_dbg ("print stores raw scans (older driver); computing keypoints now");
-    }
-  else
-    {
-      g_set_error (error, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID,
-                   "Stored print has no templates; please enroll again");
-      return -1;
-    }
+  templates = validity_tpl_array (data, device_id, &legacy, error);
+  if (templates == NULL)
+    return -1;
 
   count = g_variant_n_children (templates);
   for (gsize i = 0; i < count; i++)

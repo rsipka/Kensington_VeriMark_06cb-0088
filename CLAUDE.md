@@ -206,8 +206,17 @@ depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
    ~0.5 % at 12/15/18 — no gain above 10; wrong-finger max stays 7 at every
    size. The live 10-tap enrollment gave 3 %: taps from two sittings cover
    more than 10 in a row. Better lever than more stages: a second
-   enrollment pass that appends taps to the print (libfprint "update
-   print"; check fprintd support), not implemented.
+   enrollment pass that appends taps to the print.
+   Implemented 2026-10-20: `FP_DEVICE_FEATURE_UPDATE_PRINT`; an enroll
+   whose template is an existing print keeps its taps and adds 10 (max
+   `VALIDITY_PRINT_MAX_TAPS` = 30, oldest dropped). Tested with
+   `examples/enroll` (answer "y" to the update question): 10 → 20 taps,
+   still encrypted; 3 verify scans matched new taps (55/78/17) where the
+   old 10 alone gave 2/2/4. **fprintd does not use it** (1.94.3 and master
+   1.94.5 always enroll with a new, empty print), so with fprintd a
+   re-enroll still replaces the print. Left: a small fprintd change (pass
+   the stored print as template when the device has UPDATE_PRINT), upstream
+   or as a local patch.
 3. Encrypt stored prints: implemented (driver format 2 + key file,
    `setup-fprintd.sh --encrypt-prints` / `--drop-file-key` with an
    `ImportCredential=` credential, host+tpm2, no PCRs, plus
