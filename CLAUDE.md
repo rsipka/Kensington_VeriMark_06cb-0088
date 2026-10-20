@@ -41,7 +41,8 @@ Testing needs a person to touch the sensor; ask before each tap sequence.
 fprintd uses the build through a systemd drop-in
 (`/etc/systemd/system/fprintd.service.d/override.conf`) that sets
 `LD_LIBRARY_PATH` and bind-mounts the build directory (see
-`packaging/setup-fprintd.sh`). PAM: `pam-auth-update --enable fprintd`.
+`packaging/setup-fprintd.sh`, `--remove` to undo). PAM:
+`pam-auth-update --enable fprintd`.
 
 ## Storage
 
@@ -148,6 +149,4 @@ depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
    `LoadCredentialEncrypted=` in the fprintd drop-in; fallback root-only key
    file); keep reading unencrypted prints.
 4. Optional k-of-n rule (require ≥2 templates above a lower threshold).
-5. `packaging/setup-fprintd.sh`: `nm … | grep -q` under `pipefail` gives a
-   false "driver missing" error (SIGPIPE); use `grep … >/dev/null`.
-6. Update README for calibration, SIFT, and the extra meson source file.
+5. Update README for calibration, SIFT, and the extra meson source file.

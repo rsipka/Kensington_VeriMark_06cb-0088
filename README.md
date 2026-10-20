@@ -158,7 +158,7 @@ The steps below are written for **CachyOS / Arch with KDE Plasma 6** and the Pla
 sudo packaging/setup-fprintd.sh /path/to/libfprint/builddir
 ```
 
-That writes the systemd drop-in, reloads the daemon, and restarts `fprintd.service`. Skip to step 2.
+That writes the systemd drop-in (keeping a `.bak` copy of any existing one), reloads the daemon, restarts `fprintd.service`, and checks that fprintd really loaded the library from your build. `sudo packaging/setup-fprintd.sh --remove` undoes it. Skip to step 2.
 
 **Manual path** — if you'd rather edit by hand, run:
 
