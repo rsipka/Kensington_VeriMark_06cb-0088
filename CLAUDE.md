@@ -11,8 +11,8 @@ matching. No Windows driver data or tooling is needed at runtime.
   tree at `libfprint/drivers/validity-0088/`.
   - `validity.c` – device class, TLS session use, enroll/verify state machines,
     session prep, calibration states, matcher glue.
-  - `validity-capture-builder.c` – capture-program template (18869 B) and the
-    calibration code that rebuilds it per device.
+  - `validity-capture-builder.c` – generic capture-program skeleton (2005 B,
+    calibration slots blank) and the calibration code that fills it per device.
   - `validity-sift.c/.h` – self-contained SIFT matcher (no OpenCV).
   - `validity-handshake.c`, `validity-crypto.c`, `validity-pairing.c`,
     `validity-pretls-pair.c` – Synaptics-modified TLS, pairing, key storage.
@@ -87,11 +87,13 @@ Runs at the end of session prep when `calibration.bin` is missing or
 4. Save `calibration.bin` (`VCAL` v1: trim, frame, baseline), re-run the prep
    tail.
 
-Normal capture program = template with:
+Normal capture program (18869 B) = skeleton with:
 - `0x34` first 144 B: `clamp((px-128)*10/4)` from frame rows 18/28/38 (5 → 4);
 - `0x30`: 36 entries `0xffffffff / 0x85000000|4g`, each 56 rows × 4 px scaled;
 - `0x43`: trim bit-packed twice (`[(bits-1)|8, min, 0, 0]` + LSB-first fields);
-- `0x48`: baseline frame verbatim.
+- `0x48`: baseline frame verbatim after the 4-byte prefix.
+
+There is no uncalibrated fallback: without `calibration.bin` capture fails.
 
 Verified: built from the Windows calibration data, the program is identical to
 the Windows one (18869 B); on Linux the trim matched Windows byte for byte and
@@ -133,8 +135,8 @@ depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
 - Never commit device-specific data: `calibration.bin`, `cal-*.bin`,
   `test-storage.variant`, pairing keys, USB captures, or capture programs
   taken from a Windows install.
-- The capture template in `validity-capture-builder.c` is the generic
-  upstream one; per-device data comes only from calibration.
+- The capture skeleton in `validity-capture-builder.c` holds no sensor data;
+  never put a full capture program (any sensor's) back into the source.
 - One logical change per commit; keep `meson-fragment.txt` in sync when files
   are added.
 
