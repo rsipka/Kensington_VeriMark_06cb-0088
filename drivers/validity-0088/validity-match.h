@@ -40,7 +40,8 @@ gboolean validity_store_template (guint8       *tpl,
                                   GError      **error);
 
 /* fpi-data for an enrolled print of @device_id from the serialised
- * features of its taps (GBytes); encrypted unless disabled. Returns a
+ * features of its taps (GBytes); encrypted unless disabled, unencrypted
+ * (with a warning) when no print key exists or can be created. Returns a
  * floating reference, or NULL with @error set. */
 GVariant *validity_tpl_print_data (GPtrArray   *templates,
                                    const gchar *device_id,

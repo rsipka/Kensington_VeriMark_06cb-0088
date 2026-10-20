@@ -250,7 +250,9 @@ validity_tpl_print_data (GPtrArray *templates, const gchar *device_id,
                          GError **error)
 {
   GVariantBuilder builder;
-  GVariant *aay;
+  g_autoptr(GVariant) aay = NULL;
+  g_autoptr(GError) err = NULL;
+  GVariant *enc;
 
   g_variant_builder_init (&builder, G_VARIANT_TYPE ("aay"));
   for (guint i = 0; i < templates->len; i++)
@@ -262,8 +264,21 @@ validity_tpl_print_data (GPtrArray *templates, const gchar *device_id,
       g_variant_builder_add_value (&builder,
           g_variant_new_fixed_array (G_VARIANT_TYPE_BYTE, d, len, 1));
     }
-  aay = g_variant_builder_end (&builder);
-  if (validity_print_encryption_enabled ())
-    return validity_print_encrypt (aay, device_id, error);
-  return g_variant_new ("(u@aay)", VALIDITY_PRINT_FORMAT_SIFT, aay);
+  aay = g_variant_ref_sink (g_variant_builder_end (&builder));
+  if (!validity_print_encryption_enabled ())
+    return g_variant_new ("(u@aay)", VALIDITY_PRINT_FORMAT_SIFT, aay);
+
+  enc = validity_print_encrypt (g_variant_ref (aay), device_id, &err);
+  if (enc != NULL)
+    return enc;
+  /* No key and none can be created (storage not writable): keep the
+   * enrollment and store this print unencrypted. Any other failure, e.g.
+   * a broken key file, fails the enrollment. */
+  if (g_error_matches (err, G_IO_ERROR, G_IO_ERROR_NOT_FOUND))
+    {
+      fp_warn ("validity-0088: print stored unencrypted: %s", err->message);
+      return g_variant_new ("(u@aay)", VALIDITY_PRINT_FORMAT_SIFT, aay);
+    }
+  g_propagate_error (error, g_steal_pointer (&err));
+  return NULL;
 }

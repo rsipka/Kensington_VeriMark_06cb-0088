@@ -68,7 +68,9 @@ Directory from `validity_pairing_get_storage_dir()`:
 Contents: pairing keys (`cert-blob`, `host-key.pem`, `device-ecdh-pubkey.bin`),
 `calibration.bin`, calibration debug dumps `cal-*.bin`, and `print-key` (print
 encryption key, created at the first enroll when no credential
-`$CREDENTIALS_DIRECTORY/validity0088-print-key` exists) — all mode 600.
+`$CREDENTIALS_DIRECTORY/validity0088-print-key` exists; if it cannot be
+created the print is stored unencrypted with a warning, a broken existing
+key fails the enroll) — all mode 600. Works without systemd.
 
 ## Protocol facts (established)
 

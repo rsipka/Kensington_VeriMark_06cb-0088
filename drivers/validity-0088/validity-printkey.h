@@ -23,7 +23,10 @@ gboolean validity_print_encryption_enabled (void);
 
 /* Encrypt @templates (type aay) for a print of @device_id (may be NULL).
  * Uses the credential key, else the key file, creating the file when no
- * key exists. Returns a floating (u ay ay ay) or NULL with @error set. */
+ * key exists. Returns a floating (u ay ay ay) or NULL with @error set;
+ * G_IO_ERROR_NOT_FOUND means there is no key and none could be created
+ * (the caller may then store the print unencrypted). A broken existing key
+ * file is never replaced and gives another error. */
 GVariant *validity_print_encrypt (GVariant    *templates,
                                   const gchar *device_id,
                                   GError     **error);

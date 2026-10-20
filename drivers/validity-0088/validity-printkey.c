@@ -161,7 +161,9 @@ vpk_load_keys (void)
 }
 
 /* Create the key file with a new random key (mode 600). If another process
- * created it first, use that one. */
+ * created it first, use that one. Failing to create or write the file gives
+ * G_IO_ERROR_NOT_FOUND ("no key available"); an existing file that is not a
+ * valid key gives its own error and is left alone. */
 static gboolean
 vpk_create_key_file (VpkKey *out, GError **error)
 {
@@ -169,8 +171,15 @@ vpk_create_key_file (VpkKey *out, GError **error)
   gsize done = 0;
   int fd;
 
-  if (!validity_pairing_ensure_storage_dir (error))
-    return FALSE;
+  {
+    g_autoptr(GError) err = NULL;
+    if (!validity_pairing_ensure_storage_dir (&err))
+      {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                     "cannot create a print key: %s", err->message);
+        return FALSE;
+      }
+  }
   if (RAND_bytes (out->key, VPK_KEY_LEN) != 1 || !vpk_key_id (out))
     {
       g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
@@ -185,7 +194,7 @@ vpk_create_key_file (VpkKey *out, GError **error)
       if (e == EEXIST && vpk_read_key (path, out, error))
         return TRUE;
       if (e != EEXIST)
-        g_set_error (error, G_IO_ERROR, g_io_error_from_errno (e),
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
                      "cannot create %s: %s", path, g_strerror (e));
       return FALSE;
     }
@@ -199,7 +208,7 @@ vpk_create_key_file (VpkKey *out, GError **error)
           int e = errno;
           close (fd);
           unlink (path);
-          g_set_error (error, G_IO_ERROR, g_io_error_from_errno (e),
+          g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
                        "cannot write %s: %s", path, g_strerror (e));
           return FALSE;
         }
@@ -209,7 +218,7 @@ vpk_create_key_file (VpkKey *out, GError **error)
     {
       int e = errno;
       unlink (path);
-      g_set_error (error, G_IO_ERROR, g_io_error_from_errno (e),
+      g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
                    "cannot write %s: %s", path, g_strerror (e));
       return FALSE;
     }

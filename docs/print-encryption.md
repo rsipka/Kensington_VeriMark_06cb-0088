@@ -74,8 +74,12 @@ the file key keep working after a credential is set up. New prints are
 encrypted with the first key found.
 
 When no key exists at enroll time, the driver creates the `print-key` file
-(32 bytes from the OS random generator, mode 600), so new prints are always
-encrypted. `VALIDITY0088_PRINT_ENCRYPTION=0` turns encryption of new prints
+(32 bytes from the OS random generator, mode 600), so new prints are
+encrypted. If that file cannot be created, the print is stored unencrypted
+with a warning rather than failing the enrollment. This needs no systemd:
+on other init systems fprintd's storage directory is root's
+`~/.local/share/libfprint/verimark-06cb-0088/`, and the key file lives there
+next to the pairing data. `VALIDITY0088_PRINT_ENCRYPTION=0` turns encryption of new prints
 off (reading encrypted ones still works if the key is there).
 
 The file key alone only protects copies of the print files made without the
@@ -137,6 +141,8 @@ binding would stop that, at the price above.
 | Key present, GCM tag check fails | same error, "print damaged or encrypted with another key". |
 | Credential configured but missing / undecryptable (TPM cleared) | **to be tested**: does `ImportCredential=` then start fprintd without the credential, or fail the unit? If it fails the unit, fprintd does not start and PAM falls back to the password; the README must say how to recover (`--remove`, re-enroll). |
 | No key anywhere at enroll | `print-key` file created, print encrypted. |
+| No key, and the file cannot be created (storage not writable, disk full) | print stored **unencrypted** (format 1) with a warning; enrolling the finger again later encrypts it. |
+| `print-key` exists but is not a valid key (wrong size, unreadable) | enroll fails; the file is never replaced, so prints made with the real key are not lost. |
 | `VALIDITY0088_PRINT_ENCRYPTION=0` | new prints in format 1 (plaintext). |
 
 Nothing is ever deleted automatically.
