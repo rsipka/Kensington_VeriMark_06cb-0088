@@ -272,10 +272,19 @@ With fprintd (needs `sudo` in a normal terminal): `--encrypt-prints`, enroll,
 verify, PAM login; then make the credential undecryptable to see that only the
 helper fails.
 
-## Decisions to confirm
+## Decisions
 
-1. Always encrypt new prints, creating a `print-key` file when no credential
-   is set up (proposed), or encrypt only once `--encrypt-prints` was run?
-2. AAD with the device id only (proposed), or also user name and finger?
-3. No PCR binding (proposed), accepting that another OS with access to the
-   Linux partition and the TPM could decrypt?
+Taken when the design was accepted (2026-10-20):
+
+1. **New prints are always encrypted.** When no credential is set up, the
+   driver creates the `print-key` file at the first enrollment, so
+   encryption works without systemd and without running `--encrypt-prints`.
+   `VALIDITY0088_PRINT_ENCRYPTION=0` (`--encryption-off`) turns it off.
+2. **The AAD binds a template to its device id only**, not to the user name
+   or finger: renaming an account must not break its prints, and swapping
+   templates between users needs root anyway.
+3. **No PCR binding.** The credential is bound to this TPM and this disk's
+   host key, not to the boot state, so firmware, Secure Boot or Windows
+   updates do not lock the prints. Accepted trade-off: another OS on the
+   same machine with access to the Linux partition and the TPM could
+   decrypt the key.
