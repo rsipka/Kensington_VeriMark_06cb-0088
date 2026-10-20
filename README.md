@@ -4,18 +4,20 @@ An open-source `libfprint` driver for the Kensington VeriMark fingerprint key.
 
 > **Install, plug in, works.**
 >
-> 1. Clone this repo into a fresh `libfprint` source tree (section 2)
+> 1. Add the driver to a fresh `libfprint` source tree (section 2)
 > 2. `meson compile -C builddir`
 > 3. Plug in your VeriMark
 > 4. `fprintd-enroll` (or `examples/enroll` for testing)
 >
-> The driver auto-pairs with the device on first open and persists everything to `~/.local/share/libfprint/verimark-06cb-0088/`. Works on both unpaired devices and devices that have been paired elsewhere; multiple machines can independently pair the same device.
+> The driver auto-pairs with the device on first open, calibrates the sensor on first use, and keeps its state in `~/.local/share/libfprint/verimark-06cb-0088/` (or `/var/lib/fprint/validity-0088-pairing/` under fprintd). Works on both unpaired devices and devices that have been paired elsewhere; multiple machines can independently pair the same device. No Windows driver, registry data, or capture files are needed.
 
 ## 1. Device Information
 
 This driver targets the **Kensington VeriMark Gen 1 USB-A Fingerprint Key** (USB ID `06cb:0088`), Kensington model K67977 (or K67977WW worldwide).
 
-The VeriMark is a small USB-A dongle with a tap (capacitive area) fingerprint sensor, built around a Synaptics / Validity pre-Prometheus chip. It speaks a Synaptics-modified TLS 1.2 protocol over USB bulk transfers. This repository contains a clean-room Linux implementation of that protocol as a `libfprint` driver, packaged for drop-in integration with the upstream `libfprint` source tree.
+The VeriMark is a small USB-A dongle with a tap (capacitive area) fingerprint sensor, built around a Synaptics / Validity pre-Prometheus chip ("Windsor", sensor id `0x2449`). The sensing window is tiny: 56 × 144 pixels, about 7 × 3 mm. It speaks a Synaptics-modified TLS 1.2 protocol over USB bulk transfers. This repository contains a clean-room Linux implementation of that protocol as a `libfprint` driver, packaged for drop-in integration with the upstream `libfprint` source tree.
+
+The sensor only captures images; it does no matching itself. The driver calibrates the sensor (section 2, *Calibration*) and matches fingerprints on the host with a built-in SIFT keypoint matcher (section 2, *Matching*). It supports enroll, verify and identify.
 
 When everything is wired up the VeriMark works with `fprintd` (and therefore with PAM-based fingerprint authentication on most Linux desktops and login managers).
 
@@ -32,23 +34,24 @@ The driver compiles into `libfprint-2.so` and is loaded by `libfprint` automatic
 | `gcc` or `clang`  | C compiler                                      |
 | `glib2` (dev)     | GLib / GObject runtime + headers                |
 | `gusb` (dev)      | USB transport used by libfprint                 |
-| `gudev` (dev)     | udev integration                                |
-| `nss` (dev)       | Used by libfprint's NBIS minutiae routines      |
-| `openssl` >= 3 (dev) | Used by this driver for AES, HMAC, ECDH      |
-| `pixman` (dev)    | Image scaling used by libfprint                 |
+| `gudev` (dev)     | udev integration (optional)                     |
+| `openssl` >= 3 (dev) | Used by this driver for AES, HMAC, ECDH, ECDSA |
+| `pixman` (dev)    | Image scaling for libfprint's image drivers (optional) |
 | `pkg-config`      | Build introspection                             |
+
+The fingerprint matcher is part of the driver; it needs no extra library (no OpenCV, no NBIS).
 
 On Arch / CachyOS:
 
 ```bash
-sudo pacman -S meson ninja base-devel glib2 libgusb libgudev nss openssl pixman pkgconf
+sudo pacman -S meson ninja base-devel glib2 libgusb libgudev openssl pixman pkgconf
 ```
 
-On Debian / Ubuntu:
+On Debian / Ubuntu / Linux Mint:
 
 ```bash
 sudo apt install meson ninja-build build-essential libglib2.0-dev \
-    libgusb-dev libgudev-1.0-dev libnss3-dev libssl-dev libpixman-1-dev pkg-config
+    libgusb-dev libgudev-1.0-dev libssl-dev libpixman-1-dev pkg-config
 ```
 
 ### Build steps
@@ -56,7 +59,7 @@ sudo apt install meson ninja-build build-essential libglib2.0-dev \
 1. **Clone this repository.**
 
    ```bash
-   git clone https://github.com/visorcraft/Kensington_VeriMark_06cb-0088.git
+   git clone https://github.com/rsipka/Kensington_VeriMark_06cb-0088.git
    cd Kensington_VeriMark_06cb-0088
    ```
 
@@ -66,10 +69,11 @@ sudo apt install meson ninja-build build-essential libglib2.0-dev \
    git clone https://gitlab.freedesktop.org/libfprint/libfprint.git
    ```
 
-3. **Copy the driver source into libfprint:**
+3. **Put the driver source into libfprint**, either as a copy or as a symlink (with a symlink, `meson compile` always builds what this repository has checked out):
 
    ```bash
    cp -r drivers/validity-0088 libfprint/libfprint/drivers/
+   # or: ln -s "$PWD/drivers/validity-0088" libfprint/libfprint/drivers/validity-0088
    ```
 
 4. **Register the driver with libfprint's meson.** Two upstream files need a one-line entry added:
@@ -88,14 +92,17 @@ sudo apt install meson ninja-build build-essential libglib2.0-dev \
          'drivers/validity-0088/validity-enroll-data.c',
          'drivers/validity-0088/validity-pairing.c',
          'drivers/validity-0088/validity-pretls-pair.c',
-         'drivers/validity-0088/validity-pubkeys.c' ],
+         'drivers/validity-0088/validity-pubkeys.c',
+         'drivers/validity-0088/validity-sift.c' ],
    ```
 
-   **(b)** Open `libfprint/meson.build` (the outer one, at the project root) and find the `driver_helper_mapping` dictionary (entries like `'uru4000' : [ 'openssl' ],`). Add:
+   **(b)** Open `libfprint/meson.build` (the outer one, at the project root). Current libfprint lists drivers in the `drivers_info` dictionary (entries like `'uru4000': { 'helper': ['openssl'] },`). Add:
 
    ```meson
-   'validity_0088' : [ 'openssl' ],
+   'validity_0088' : { 'helper': ['openssl'] },
    ```
+
+   Older libfprint trees use a `driver_helper_mapping` dictionary instead (entries like `'uru4000' : [ 'openssl' ],`); there, add `'validity_0088' : [ 'openssl' ],`.
 
    This wires the driver up against libcrypto, which it uses for AES, HMAC, ECDH, and ECDSA.
 
@@ -125,11 +132,39 @@ sudo apt install meson ninja-build build-essential libglib2.0-dev \
    LD_LIBRARY_PATH=$(pwd)/builddir/libfprint ./builddir/examples/verify
    ```
 
-   At the "Choose finger" prompt, pick `6` (right index). On first run with no enrolled finger you'll get `Did you remember to enroll your finger first?` — that's expected; run `examples/enroll` instead to enroll, then come back.
+   At the "Choose finger" prompt, pick `6` (right index). On first run with no enrolled finger you'll get `Did you remember to enroll your finger first?` — that's expected; run `examples/enroll` instead to enroll, then come back. The examples keep their prints in `test-storage.variant` in the current directory; `examples/identify` matches a scan against all of them.
+
+### Calibration
+
+Every sensor needs its own calibration; the driver does it by itself. When no calibration is stored yet, the next enroll or verify first calibrates the sensor (about a quarter of a second, logged as `calibrating the sensor - do not touch it`): **keep your finger off the sensor until you are asked to tap.** The driver then
+
+1. reads the factory trim stored in the sensor,
+2. runs two calibration scans of the empty sensor,
+3. saves the result as `calibration.bin` in the storage directory (see below), and
+4. builds the capture program from it for every scan.
+
+Set `VALIDITY0088_RECALIBRATE=1` for one run to calibrate again (finger off). The capture program embedded in the source is only a generic skeleton with all sensor-specific parts blank, so scanning without a calibration is not possible: if calibration fails, enroll and verify fail with an error and calibration is retried on the next attempt.
+
+### Matching
+
+The sensor window is too small for classic minutiae matching (a scan holds only 3–9 minutiae). The driver instead reduces each scan to up to 250 SIFT keypoints and accepts a match when enough of them agree with one enrolled tap under a single rotation and shift (RANSAC; up to ±25° rotation).
+
+- **Score** = number of consistent keypoints. Match threshold: **12** (`VALIDITY0088_SIFT_THRESHOLD`). In testing, the enrolled finger scored roughly 20–150 and other fingers at most 5.
+- **Prints** store keypoints only (about 33 KB per tap, 10 taps per print), never fingerprint images. Prints made by older versions of this driver that stored raw scans still verify.
+- **Identify** scores a scan against every enrolled print and reports the best one above the threshold. fprintd uses this for its duplicate check when you enroll.
+- **Coverage matters:** a scan of a finger area that none of the enrolled taps covers scores like a different finger. Vary the placement while enrolling (centre, tip, left and right edge, lower part).
 
 ### Per-device data
 
-**You don't need to supply any.** The driver auto-pairs on first open: it generates a fresh keypair, exchanges it with the device, and persists `cert-blob`, `host-key.pem`, and `device-ecdh-pubkey.bin` to `~/.local/share/libfprint/verimark-06cb-0088/`. Subsequent opens reuse the on-disk material.
+**You don't need to supply any.** The driver auto-pairs on first open: it generates a fresh keypair, exchanges it with the device, and persists `cert-blob`, `host-key.pem`, and `device-ecdh-pubkey.bin`. Subsequent opens reuse the on-disk material. The sensor calibration (`calibration.bin`, plus `cal-*.bin` debug dumps) lives in the same directory. All files are mode 600.
+
+The storage directory is
+
+- `$VALIDITY0088_STORAGE_DIR` if set, else
+- `$STATE_DIRECTORY/validity-0088-pairing` — under fprintd: `/var/lib/fprint/validity-0088-pairing/`, else
+- `~/.local/share/libfprint/verimark-06cb-0088/` (CLI tools such as the libfprint examples).
+
+fprintd and the examples therefore keep separate pairing data and calibrations; each calibrates on its first use.
 
 To skip the autonomous ceremony (e.g., for debugging), set `VALIDITY0088_SKIP_AUTO_PAIR=1`. With that set and no on-disk pair material present, `open()` will fail rather than self-pair, and you can drop your own `cert-blob`, `host-key.pem`, and `device-ecdh-pubkey.bin` into the pairing storage directory by hand.
 
@@ -137,6 +172,11 @@ To skip the autonomous ceremony (e.g., for debugging), set `VALIDITY0088_SKIP_AU
 
 | Environment variable | Effect |
 |---|---|
+| `VALIDITY0088_RECALIBRATE=1` | Calibrate the sensor again in the next enroll/verify (keep the finger off the sensor). |
+| `VALIDITY0088_SIFT_THRESHOLD=<n>` | Match threshold in consistent keypoints (default 12, allowed 4–10000). Higher means fewer false accepts and more false rejects. |
+| `VALIDITY0088_LED_RESULT=0` | No LED feedback (success pulse / red flash) after a verify or identify. |
+| `VALIDITY0088_VERIFY_MODE=enroll` | Capture verify scans with capture mode `0x23` (as enroll taps) instead of `0x02`. Debugging aid. |
+| `VALIDITY0088_TRY_HARD_RESET=1` | On the next `open()`, send the device's unpair sequence instead of opening it; then unplug, replug and unset the variable. Recovery tool. |
 | `VALIDITY0088_SKIP_AUTO_PAIR=1` | Disable the autonomous pairing on first open. `open()` will fail instead of self-pairing when no on-disk pair material is present. |
 | `VALIDITY0088_FLASH_LIVE=1` | Allow the post-handshake pairing ceremony's flash-write step to actually send `0x3f` / `0x41` / `0x42` frames to the device. **The default is dry-run**: the driver computes every frame and hexdumps it via the journal but does NOT send anything. Only set this once you've reviewed the dry-run output and accept the risk of touching partition 1 (the cert store). |
 | `VALIDITY0088_FLASH_DRY_RUN=1` | Force dry-run mode even when `VALIDITY0088_FLASH_LIVE=1` is set. Useful as an explicit safety override in scripts. |
@@ -144,7 +184,9 @@ To skip the autonomous ceremony (e.g., for debugging), set `VALIDITY0088_SKIP_AU
 | `VALIDITY0088_STORAGE_DIR=<path>` | Override the pairing-storage directory entirely (testing / non-systemd hosts). |
 | `VALIDITY0088_FLASH_SIGNATURE_HEX=<hex>` | When the cert-store flash write needs an attached firmware-extension signature, supply it as a hex string. Not required for the default cert-store write path. |
 | `VALIDITY0088_ENROLL_HOSTPART_CMD=<path>` | Override the embedded enroll-time HOSTPART payload with raw bytes at the given path. The file must be 10501 B and start with the `0x06` wire opcode. Debugging aid; not needed in normal operation. |
-| `VALIDITY0088_ENROLL_CAPTURE_CMD=<path>` | Override the embedded capture-program command with raw bytes at the given path. The file must be 18869 B and start with the `0x02` wire opcode. Auto-engaged on devices whose ROM family doesn't match the family the builder targets; otherwise intended only for debugging. |
+| `VALIDITY0088_ENROLL_CAPTURE_CMD=<path>` | Send the capture program from this file instead of building it from the calibration. The file must be 18869 B and start with the `0x02` wire opcode; it is sent as is (the capture mode byte is not set and the calibration is not applied). Debugging aid only. |
+
+Variables from older versions (`VALIDITY0088_BZ3_THRESHOLD`, `VALIDITY0088_NCC_THRESHOLD`, `VALIDITY0088_IMAGE_SCALE`, `VALIDITY0088_IMAGE_PARTIAL`, `_IMAGE_INVERT`, `_IMAGE_H_FLIP`, `_IMAGE_V_FLIP`) no longer have any effect.
 
 ## 3. Quick Setup (use the fingerprint on the login screen)
 
@@ -160,6 +202,8 @@ sudo packaging/setup-fprintd.sh /path/to/libfprint/builddir
 
 That writes the systemd drop-in (keeping a `.bak` copy of any existing one), reloads the daemon, restarts `fprintd.service`, and checks that fprintd really loaded the library from your build. `sudo packaging/setup-fprintd.sh --remove` undoes it. Skip to step 2.
 
+Run it from a normal terminal: `sudo` does not work inside sandboxed shells (for example an AI assistant's shell) that set the "no new privileges" flag. The build directory may be behind a symlink (such as `~/Documents` pointing to another disk); the script resolves it. After rebuilding the library, `sudo systemctl restart fprintd` makes fprintd load the new build.
+
 **Manual path** — if you'd rather edit by hand, run:
 
 ```bash
@@ -169,10 +213,15 @@ sudo systemctl edit fprintd.service
 Add (replace the path with your actual location):
 
 ```ini
+[Unit]
+RequiresMountsFor=/path/to/libfprint/builddir/libfprint
+
 [Service]
 Environment=LD_LIBRARY_PATH=/run/libfprint-validity-0088
 BindReadOnlyPaths=/path/to/libfprint/builddir/libfprint:/run/libfprint-validity-0088
 ```
+
+Use the real path (no symlinks) of the build directory. `RequiresMountsFor=` makes fprintd wait at boot until the disk with the build is mounted.
 
 The `BindReadOnlyPaths=src:dst` line bind-mounts the build's lib directory at a stable system path (`/run/libfprint-validity-0088`) inside fprintd's mount namespace, then points `LD_LIBRARY_PATH` at that mount. This is needed because the fprintd unit ships with `ProtectHome=yes`, which hides `/home` from the service — bind-mounting to a `/home`-relative destination wouldn't help (the destination is under the hidden tmpfs), so we bind to a path outside `/home`.
 
@@ -197,9 +246,19 @@ Expected output names the device as `Synaptics/Validity (pre-Prometheus)`. If yo
 fprintd-enroll "$USER"
 ```
 
-You will be prompted to "Place your finger" ten times. Tap a single finger consistently each time. The LED glows blue while the device waits for a tap. After the tenth accepted tap, `fprintd` reports success and the print is stored in its system-managed location.
+If no calibration exists yet for fprintd, the first scan is preceded by a short calibration: keep the finger off the sensor until you are asked to tap. If you already have enrolled fingers, fprintd first asks for one tap to check that the finger is not enrolled yet (duplicate check).
+
+You will then be prompted to "Place your finger" ten times. Use the same finger every time, but **vary where it touches the sensor** (centre, tip, left and right edge, lower part): the sensor sees only about 7 × 3 mm of the finger, and a later scan only matches an area that one of the enrolled taps covered. Lift the finger completely between taps; a tap that is too short or too light is simply asked for again. The LED glows blue while the device waits for a tap. After the tenth accepted tap, `fprintd` reports success and the print is stored in its system-managed location.
 
 ### Step 4 - Wire PAM for the login screen
+
+On **Debian / Ubuntu / Linux Mint**, fprintd ships a PAM profile; enable it with
+
+```bash
+sudo pam-auth-update --enable fprintd
+```
+
+and continue with step 5. On **Arch / CachyOS**, edit the PAM stack by hand as below.
 
 Open a second TTY (Ctrl+Alt+F3) and log in there before changing PAM, so you have a fallback if you misconfigure something.
 
@@ -223,6 +282,15 @@ Log out of your current Plasma session (or reboot). At the login screen, click y
 The same PAM stack also applies to KDE's screen locker, so unlocking the screen via fingerprint works after this is set up.
 
 To extend fingerprint authentication to `sudo`, add the same `auth sufficient pam_fprintd.so` line to the top of `/etc/pam.d/sudo`.
+
+### Troubleshooting
+
+- **Look at the log first:** `journalctl -u fprintd -n 50`. For the libfprint examples, run them with `G_MESSAGES_DEBUG=all`.
+- **"device did not return an image"** during a scan means the tap was too short or too light (status `0x0007`); the scan is simply asked for again.
+- **Verify works for some placements only:** enroll the finger again with more varied placement (step 3).
+- **Calibration seems off** (many failed scans, low match scores after moving the device to another machine or after a firmware change): run once with `VALIDITY0088_RECALIBRATE=1` and the finger off the sensor. For fprintd, delete `/var/lib/fprint/validity-0088-pairing/calibration.bin` instead (as root) and restart fprintd.
+- **fprintd stopped working after the build directory moved:** run `setup-fprintd.sh` again with the new path.
+- **Prints enrolled with a much older version** of this driver (NBIS era) do not verify any more: delete them (`fprintd-delete "$USER"`) and enroll again.
 
 ## 4. Copyright
 

@@ -25,7 +25,8 @@ In a libfprint checkout:
 
 1. `libfprint/meson.build` (inner) → `driver_sources['validity_0088']` must
    list all driver `.c` files, **including `validity-sift.c`**.
-2. Root `meson.build` → `driver_helper_mapping`: `'validity_0088' : [ 'openssl' ]`.
+2. Root `meson.build` → `drivers_info`: `'validity_0088' : { 'helper': ['openssl'] }`
+   (older trees: `driver_helper_mapping`, `'validity_0088' : [ 'openssl' ]`).
 3. `meson setup builddir -Ddrivers=validity_0088 && ninja -C builddir`.
 
 Test without installing:
@@ -162,4 +163,3 @@ depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
    `LoadCredentialEncrypted=` in the fprintd drop-in; fallback root-only key
    file); keep reading unencrypted prints.
 4. Optional k-of-n rule (require ≥2 templates above a lower threshold).
-5. Update README for calibration, SIFT, and the extra meson source file.

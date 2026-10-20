@@ -24,8 +24,12 @@
 ; ---------------------------------------------------------------------------
 ; 2) libfprint/meson.build  (the OUTER one, in the project root)
 ;
-;    Add to the `driver_helper_mapping` dictionary so the driver gets
-;    linked against libcrypto:
+;    Current libfprint: add to the `drivers_info` dictionary so the driver
+;    gets linked against libcrypto:
+;
+;   'validity_0088' : { 'helper': ['openssl'] },
+;
+;    Older libfprint trees use a `driver_helper_mapping` dictionary instead:
 ;
 ;   'validity_0088' : [ 'openssl' ],
 ;
