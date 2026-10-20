@@ -62,7 +62,8 @@ Unit tests (no device): `tests/run.sh` after `packaging/build-libfprint.sh`
 (matcher on artificial fingerprints, print encryption and formats, capture
 program checksums, pairing key, setup-fprintd.sh in a sandbox; ~15 s). See
 `docs/testing.md`. Add a test with every behaviour change. CI:
-`.github/workflows/ci.yml` (5 distributions + libfprint master); the same
+`.github/workflows/ci.yml` (6 distributions incl. Rocky 9 and 10, plus
+libfprint master); the same
 jobs locally: `.github/ci/run-local.sh` (podman/docker, not from a sandboxed
 shell).
 

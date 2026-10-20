@@ -4,7 +4,8 @@
 # containers, before pushing. Needs podman (or docker) and network access.
 #
 # Usage: .github/ci/run-local.sh [image...]
-#        (default: ubuntu:24.04 debian:12 debian:13 fedora:42 rockylinux:9)
+#        (default: the images of ci.yml; names without a "/" are Docker Hub
+#        official images, e.g. fedora:42, others e.g. rockylinux/rockylinux:10)
 #
 # Each image gets a fresh copy of the repository's committed state plus your
 # uncommitted changes (without build/), so your own build/ is not touched.
@@ -19,7 +20,8 @@ ENGINE="$(command -v podman || command -v docker || true)"
 [ -n "$ENGINE" ] || { echo "run-local: podman or docker is needed" >&2; exit 1; }
 
 IMAGES=("$@")
-[ ${#IMAGES[@]} -gt 0 ] || IMAGES=(ubuntu:24.04 debian:12 debian:13 fedora:42 rockylinux:9)
+[ ${#IMAGES[@]} -gt 0 ] || IMAGES=(ubuntu:24.04 debian:12 debian:13 fedora:42
+                                   rockylinux/rockylinux:9 rockylinux/rockylinux:10)
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/verimark-ci-XXXXXX")"
 RESULTS=()
@@ -29,20 +31,24 @@ FAILED=0
 if "$ENGINE" run --rm -v "$REPO":/mnt:ro,Z -w /mnt docker.io/koalaman/shellcheck-alpine:stable \
         sh -c 'shellcheck -S warning packaging/*.sh tests/*.sh .github/ci/*.sh' >"$WORK/lint.log" 2>&1 &&
    "$REPO/tests/check-repo.sh" >>"$WORK/lint.log" 2>&1; then
-    RESULTS+=("lint                 PASS")
+    RESULTS+=("lint                       PASS")
 else
-    RESULTS+=("lint                 FAIL  ($WORK/lint.log)")
+    RESULTS+=("lint                       FAIL  ($WORK/lint.log)")
     FAILED=1
 fi
 
 # --- build and test per distribution ----------------------------------------
 for img in "${IMAGES[@]}"; do
     name="$(echo "$img" | tr ':./' '---')"
+    case "$img" in
+        */*) ref="docker.io/$img" ;;
+        *)   ref="docker.io/library/$img" ;;
+    esac
     src="$WORK/$name"
     mkdir -p "$src"
     rsync -a --exclude /build/ "$REPO"/ "$src"/
     start=$(date +%s)
-    if "$ENGINE" run --rm -v "$src":/src:Z -w /src "docker.io/library/$img" bash -c '
+    if "$ENGINE" run --rm -v "$src":/src:Z -w /src "$ref" bash -c '
             set -e
             .github/ci/prepare-container.sh
             packaging/build-libfprint.sh --install-deps
@@ -55,7 +61,7 @@ for img in "${IMAGES[@]}"; do
         status="FAIL  ($WORK/$name.log)"
         FAILED=1
     fi
-    RESULTS+=("$(printf '%-20s %s  %ss' "$img" "$status" "$(( $(date +%s) - start ))")")
+    RESULTS+=("$(printf '%-26s %s  %ss' "$img" "$status" "$(( $(date +%s) - start ))")")
     echo "run-local: $img done"
 done
 

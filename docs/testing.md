@@ -31,7 +31,7 @@ weekly (to notice new libfprint releases):
   listed once in `meson-fragment.txt` and the README, SPDX lines, no device or
   biometric data tracked, documentation links).
 - **Build and test** in containers: Ubuntu 24.04, Debian 12 and 13, Fedora
-  42, Rocky Linux 9, each against the latest libfprint release; Ubuntu also
+  42, Rocky Linux 9 and 10, each against the latest libfprint release; Ubuntu also
   against libfprint `master` (allowed to fail: an early warning about
   upstream changes). Each job runs `packaging/build-libfprint.sh
   --install-deps`, fails on any compiler warning in the driver, runs
