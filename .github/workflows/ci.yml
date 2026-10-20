@@ -7,6 +7,9 @@ name: CI
 
 on:
   push:
+    # master only receives fast-forwards of commits already tested on
+    # development; the weekly run below still covers it
+    branches-ignore: [master]
   pull_request:
   workflow_dispatch:
   schedule:

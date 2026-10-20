@@ -24,8 +24,9 @@ about 15 seconds.
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs on every push and pull request, manually and
-weekly (to notice new libfprint releases):
+`.github/workflows/ci.yml` runs on every push (except to `master`, which only
+receives fast-forwards of commits already tested on `development`), on pull
+requests, manually and weekly on `master` (to notice new libfprint releases):
 
 - **Lint:** shellcheck on all scripts, `tests/check-repo.sh` (driver sources
   listed once in `meson-fragment.txt`, SPDX lines, no device or
