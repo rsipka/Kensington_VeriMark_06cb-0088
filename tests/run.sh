@@ -130,6 +130,11 @@ if want test-setup-fprintd; then
         PASS=$((PASS - 1)) && SKIP=$((SKIP + 1))
 fi
 
+# --- repository rules -------------------------------------------------------
+if want check-repo; then
+    run_binary check-repo bash "$T/check-repo.sh"
+fi
+
 # --- shell scripts -----------------------------------------------------------
 if want shellcheck; then
     if command -v shellcheck >/dev/null; then

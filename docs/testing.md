@@ -22,6 +22,32 @@ about 15 seconds.
 | `test-setup-fprintd` | `packaging/setup-fprintd.sh` in a sandbox with stand-ins for `systemctl` and `systemd-creds`: every option and its error cases. Needs root or unprivileged user namespaces (`unshare -r`), otherwise skipped |
 | `shellcheck` | The shell scripts, if `shellcheck` is installed |
 
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and pull request, manually and
+weekly (to notice new libfprint releases):
+
+- **Lint:** shellcheck on all scripts, `tests/check-repo.sh` (driver sources
+  listed once in `meson-fragment.txt` and the README, SPDX lines, no device or
+  biometric data tracked, documentation links).
+- **Build and test** in containers: Ubuntu 24.04, Debian 12 and 13, Fedora
+  42, Rocky Linux 9, each against the latest libfprint release; Ubuntu also
+  against libfprint `master` (allowed to fail: an early warning about
+  upstream changes). Each job runs `packaging/build-libfprint.sh
+  --install-deps`, fails on any compiler warning in the driver, runs
+  `tests/run.sh` and uploads the logs when it fails.
+
+The same jobs run locally with podman or docker before pushing:
+
+```bash
+.github/ci/run-local.sh                  # all images
+.github/ci/run-local.sh fedora:42        # one image
+```
+
+`.github/ci/prepare-container.sh` holds the per-distribution preparation
+shared by both (certificates and git; on RHEL clones the CRB repository for
+`libgusb-devel` and `meson`).
+
 What the tests cannot cover: anything with the sensor itself (USB, TLS
 session, capture, calibration on hardware, LED). Before a release, run the
 manual checks: enroll and verify with the libfprint examples, one forced

@@ -3,7 +3,7 @@
 # build-libfprint.sh — fetch upstream libfprint, add the validity-0088
 # driver from this repository, and build it.
 #
-# Usage (from anywhere, as a normal user):
+# Usage (from anywhere, as a normal user; root works too, e.g. in CI):
 #   packaging/build-libfprint.sh [--ref <tag|branch>] [--install-deps]
 #                                [--no-update] [--clean]
 #
@@ -51,7 +51,13 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-[ "$(id -u)" -ne 0 ] || die "run as a normal user (sudo is only used for --install-deps)"
+# Normally run as a user (sudo only for --install-deps); root is accepted for
+# containers and CI, where the build directory then belongs to root.
+SUDO=(sudo)
+if [ "$(id -u)" -eq 0 ]; then
+    SUDO=()
+    say "running as root: fine in a container, otherwise prefer a normal user"
+fi
 [ -d "$DRIVER" ] || die "driver sources not found: $DRIVER"
 
 # ---------------------------------------------------------------------------
@@ -113,12 +119,13 @@ if [ ${#MISSING[@]} -gt 0 ]; then
         [ -n "$p" ] && [[ " ${PKGS[*]:-} " != *" $p "* ]] && PKGS+=("$p")
     done
     case "$FAMILY" in
-        debian) CMD=(sudo apt-get install -y "${PKGS[@]}") ;;
-        rhel)   CMD=(sudo dnf install -y "${PKGS[@]}") ;;
+        debian) CMD=("${SUDO[@]}" apt-get install -y "${PKGS[@]}") ;;
+        rhel)   CMD=("${SUDO[@]}" dnf install -y "${PKGS[@]}") ;;
         *)      die "unknown distribution (${ID:-?}): install the tools and pkg-config modules above yourself" ;;
     esac
     if [ "$INSTALL_DEPS" -eq 1 ]; then
         say "installing: ${PKGS[*]}"
+        [ "$FAMILY" = debian ] && "${SUDO[@]}" apt-get update -q
         "${CMD[@]}"
         mapfile -t MISSING < <(missing_checks)
         [ ${#MISSING[@]} -eq 0 ] || die "still missing after install: ${MISSING[*]}"
