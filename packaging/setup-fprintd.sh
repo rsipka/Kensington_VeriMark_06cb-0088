@@ -14,6 +14,7 @@
 #   sudo ./setup-fprintd.sh --drop-file-key
 #   sudo ./setup-fprintd.sh --encryption-off | --encryption-on
 #   sudo ./setup-fprintd.sh --delete-key [--yes]
+#   sudo ./setup-fprintd.sh --pam TRIES TIMEOUT | --pam-default
 #   sudo ./setup-fprintd.sh --status
 #   sudo ./setup-fprintd.sh --remove
 #
@@ -34,6 +35,16 @@
 # (/etc/credstore.encrypted/, decrypted by fprintd itself) is moved.
 # --drop-file-key then deletes the key file once the credential is known to
 # hold the same key. See docs/print-encryption.md.
+#
+# --pam (Debian family, pam-auth-update) sets how many fingerprint attempts
+# PAM allows and for how many seconds, for every service that includes
+# common-auth (login screen, lock screen, sudo, polkit). The distribution's
+# profile uses max-tries=1 timeout=10; fprintd's own defaults are 3 and 30.
+# It installs the pam-auth-update profile validity0088-fprintd in place of
+# the package's fprintd profile (and any other profile with pam_fprintd), so
+# package updates do not undo it. pam-auth-update reads profiles only from
+# /usr/share/pam-configs; no package owns that file. --pam-default switches
+# back to the package's profile.
 #
 # The argument is the meson build directory (the parent of the
 # libfprint/ subdir that contains libfprint-2.so.2.0.0); that subdir
@@ -68,11 +79,17 @@ KEY_FILE=/var/lib/fprint/validity-0088-pairing/print-key
 # fprintd unit's ProtectHome=yes sandbox.
 EXPOSED=/run/libfprint-validity-0088
 LIB_NAME=libfprint-2.so.2.0.0
+PAM_CONFIGS=/usr/share/pam-configs
+PAM_PROFILE_NAME=validity0088-fprintd
+PAM_PROFILE="$PAM_CONFIGS/$PAM_PROFILE_NAME"
+COMMON_AUTH=/etc/pam.d/common-auth
 
 [ "$(id -u)" -eq 0 ] || die "must be run as root (try: sudo $0 ...)"
 USAGE="usage: $0 /path/to/libfprint/builddir | --encrypt-prints | --drop-file-key |
-       --encryption-off | --encryption-on | --delete-key [--yes] | --status | --remove"
-[ $# -eq 1 ] || { [ $# -eq 2 ] && [ "$1" = --delete-key ] && [ "$2" = --yes ]; } || die "$USAGE"
+       --encryption-off | --encryption-on | --delete-key [--yes] |
+       --pam TRIES TIMEOUT | --pam-default | --status | --remove"
+[ $# -eq 1 ] || { [ $# -eq 2 ] && [ "$1" = --delete-key ] && [ "$2" = --yes ]; } \
+    || { [ $# -eq 3 ] && [ "$1" = --pam ]; } || die "$USAGE"
 
 systemctl cat fprintd.service >/dev/null 2>&1 \
     || die "fprintd.service is not installed on this system"
@@ -105,6 +122,13 @@ count_prints () {
         if grep -qF '(uayayay)' "$f"; then enc=$((enc + 1)); else plain=$((plain + 1)); fi
     done < <(find "$PRINT_ROOT" -mindepth 4 -maxdepth 4 -type f -path "*/validity-0088/*" -print0 2>/dev/null)
     echo "$enc $plain"
+}
+
+# Whether common-auth uses pam_fprintd, and the options of that line.
+pam_fprintd_on () { grep -q -E '^[^#]*pam_fprintd\.so' "$COMMON_AUTH" 2>/dev/null; }
+pam_fprintd_opts () {
+    { grep -h -E '^[^#]*pam_fprintd\.so' "$COMMON_AUTH" 2>/dev/null || true; } | head -n 1 \
+        | sed 's/.*pam_fprintd\.so[[:space:]]*//; s/[[:space:]]*#.*//; s/[[:space:]]*$//'
 }
 
 # The unit that decrypts the credential for fprintd (see the header).
@@ -184,6 +208,18 @@ if [ "$1" = "--status" ]; then
     else
         say "prints:     $ENC encrypted, $PLAIN unencrypted"
     fi
+    if [ ! -f "$COMMON_AUTH" ]; then
+        say "pam:        no $COMMON_AUTH (configure pam_fprintd by hand, see docs/packaging.md#pam)"
+    elif pam_fprintd_on; then
+        OPTS="$(pam_fprintd_opts)"
+        if [ -f "$PAM_PROFILE" ] && grep -qF "pam_fprintd.so $OPTS" "$PAM_PROFILE"; then
+            say "pam:        fingerprint with $OPTS (set by --pam)"
+        else
+            say "pam:        fingerprint with ${OPTS:-default options (max-tries=3 timeout=30)}"
+        fi
+    else
+        say "pam:        fingerprint not used (sudo pam-auth-update --enable fprintd, or --pam)"
+    fi
     exit 0
 fi
 
@@ -243,6 +279,66 @@ if [ "$1" = "--delete-key" ]; then
     exit 0
 fi
 
+if [ "$1" = "--pam" ]; then
+    TRIES="$2" TIMEOUT="$3"
+    [[ "$TRIES" =~ ^[0-9]+$ ]] && [ "$TRIES" -ge 1 ] && [ "$TRIES" -le 20 ] \
+        || die "TRIES must be a number from 1 to 20"
+    [[ "$TIMEOUT" =~ ^[0-9]+$ ]] && [ "$TIMEOUT" -ge 10 ] && [ "$TIMEOUT" -le 300 ] \
+        || die "TIMEOUT must be 10 to 300 seconds (pam_fprintd's minimum is 10)"
+    command -v pam-auth-update >/dev/null \
+        || die "pam-auth-update not found (not a Debian-family system): add max-tries=$TRIES timeout=$TIMEOUT to the pam_fprintd.so line yourself, see docs/packaging.md#pam"
+    [ -f "$COMMON_AUTH" ] || die "$COMMON_AUTH not found"
+    grep -q -E '^[^#]*pam_fingwit\.so' "$COMMON_AUTH" \
+        && die "PAM uses fingwit (fingerprint + keyring unlock); --pam would replace it. Set max-tries/timeout in its profile instead"
+    # every other profile that runs pam_fprintd (the package's, hand-made ones)
+    OTHERS=()
+    for f in "$PAM_CONFIGS"/*; do
+        [ -f "$f" ] && [ "$f" != "$PAM_PROFILE" ] && grep -q 'pam_fprintd\.so' "$f" && OTHERS+=("$(basename "$f")")
+    done
+    WAS_ON=0
+    pam_fprintd_on && WAS_ON=1
+    mkdir -p "$PAM_CONFIGS"
+    {
+        echo "Name: Fingerprint authentication ($TRIES tries, $TIMEOUT s; validity-0088 setup-fprintd.sh --pam)"
+        echo "Default: no"
+        echo "Priority: 260"
+        echo "Conflicts: fprint, fprintd"
+        echo "Auth-Type: Primary"
+        echo "Auth:"
+        printf '\t[success=end default=ignore]\tpam_fprintd.so max-tries=%s timeout=%s\n' "$TRIES" "$TIMEOUT"
+    } > "$PAM_PROFILE"
+    chmod 0644 "$PAM_PROFILE"
+    if [ ${#OTHERS[@]} -gt 0 ]; then
+        pam-auth-update --disable "${OTHERS[@]}" --enable "$PAM_PROFILE_NAME"
+    else
+        pam-auth-update --enable "$PAM_PROFILE_NAME"
+    fi
+    # pam-auth-update leaves a hand-edited common-auth alone and still exits 0
+    [ "$(pam_fprintd_opts)" = "max-tries=$TRIES timeout=$TIMEOUT" ] \
+        || die "$COMMON_AUTH was not updated (edited by hand? pam-auth-update then leaves it alone); set max-tries=$TRIES timeout=$TIMEOUT on its pam_fprintd.so line yourself, or undo with --pam-default"
+    [ "$WAS_ON" -eq 1 ] || say "fingerprint authentication is now enabled"
+    say "PAM: up to $TRIES fingerprint attempt(s) within $TIMEOUT s, then the password"
+    say "     (login screen, lock screen, sudo, polkit; undo: $0 --pam-default)"
+    exit 0
+fi
+
+if [ "$1" = "--pam-default" ]; then
+    [ -f "$PAM_PROFILE" ] || die "no $PAM_PROFILE: PAM already uses the distribution's fprintd settings"
+    command -v pam-auth-update >/dev/null || die "pam-auth-update not found"
+    if pam_fprintd_on && grep -qF "pam_fprintd.so $(pam_fprintd_opts)" "$PAM_PROFILE"; then
+        pam-auth-update --disable "$PAM_PROFILE_NAME" --enable fprintd
+    else
+        pam-auth-update --disable "$PAM_PROFILE_NAME"
+    fi
+    rm -f -- "$PAM_PROFILE"
+    if pam_fprintd_on; then
+        say "PAM uses the distribution's fprintd profile again: $(pam_fprintd_opts)"
+    else
+        say "removed $PAM_PROFILE; fingerprint is not used by PAM"
+    fi
+    exit 0
+fi
+
 if [ "$1" = "--remove" ]; then
     [ -f "$OVERRIDE_FILE" ] || [ -f "$KEY_DROPIN" ] || [ -f "$ENC_DROPIN" ] || [ -f "$HELPER_UNIT" ] \
         || die "no drop-in in $OVERRIDE_DIR"
@@ -267,6 +363,7 @@ if [ "$1" = "--remove" ]; then
     systemctl try-restart fprintd.service
     CRED="$(current_cred)"
     [ -n "$CRED" ] && say "kept the print key credential $CRED (needed to read encrypted prints)"
+    [ -f "$PAM_PROFILE" ] && say "kept the PAM settings of --pam (undo: $0 --pam-default)"
     exit 0
 fi
 

@@ -113,7 +113,9 @@ Run as root (`sudo`), from a normal terminal — sandboxed shells that set the
 | `--drop-file-key` | Delete the `print-key` file once the credential holds the same key |
 | `--encryption-off` / `--encryption-on` | Drop-in `validity0088-encryption.conf` with `VALIDITY0088_PRINT_ENCRYPTION=0` / remove it; encrypted prints stay readable while the key exists |
 | `--delete-key [--yes]` | Delete credential, key file, helper unit and key drop-in after confirmation; encrypted prints become unreadable |
-| `--remove` | Remove all drop-ins and the helper unit of this script; the credential is kept |
+| `--pam TRIES TIMEOUT` | Debian family: fingerprint attempts and seconds PAM allows before the password (see [PAM](#pam)) |
+| `--pam-default` | Back to the distribution's PAM fingerprint settings |
+| `--remove` | Remove all drop-ins and the helper unit of this script; the credential and `--pam` settings are kept |
 
 After rebuilding the library: `sudo systemctl restart fprintd`.
 
@@ -164,6 +166,29 @@ Without systemd (OpenRC, runit …) the driver uses root's
 ## PAM
 
 **Debian / Ubuntu / Mint:** `sudo pam-auth-update --enable fprintd`.
+
+**Attempts and timeout.** The distribution's profile uses
+`pam_fprintd.so max-tries=1 timeout=10`: one non-matching tap or 10 seconds,
+then the password (fprintd's own defaults are 3 tries and 30 s; 10 s is the
+minimum). A tap that is too short or too light does not count as a try. To
+allow more:
+
+```bash
+sudo packaging/setup-fprintd.sh --pam 3 20      # 3 tries within 20 s
+sudo packaging/setup-fprintd.sh --pam-default   # back to the distribution's settings
+```
+
+This applies to everything that includes `common-auth`: the login screen
+(LightDM), the lock screen, `sudo`, `su` and polkit. The fingerprint step
+runs before the password prompt, so a longer timeout also means waiting
+longer when you want to type the password. `--pam` writes the
+pam-auth-update profile `/usr/share/pam-configs/validity0088-fprintd`
+(pam-auth-update reads profiles only from there; no package owns the file,
+so updates keep it) and disables the package's `fprintd` profile and any
+other profile with `pam_fprintd`. If `common-auth` was edited by hand,
+pam-auth-update leaves it alone and the script says so; then change the
+`max-tries=`/`timeout=` on its `pam_fprintd.so` line yourself. Elsewhere add
+the same options to the `pam_fprintd.so` line (below).
 
 **Arch / CachyOS** (by hand). First open a second TTY (Ctrl+Alt+F3) and log
 in there, so you have a way back if something goes wrong. Then:

@@ -85,7 +85,9 @@ fprintd uses the build through a systemd drop-in
 (`/etc/systemd/system/fprintd.service.d/override.conf`) that sets
 `LD_LIBRARY_PATH` and bind-mounts the build directory (see
 `packaging/setup-fprintd.sh`, `--remove` to undo). PAM:
-`pam-auth-update --enable fprintd`.
+`pam-auth-update --enable fprintd`; `setup-fprintd.sh --pam TRIES TIMEOUT`
+replaces the distribution's `max-tries=1 timeout=10` with its own
+pam-auth-update profile (`--pam-default` undoes it).
 
 ## Storage
 

@@ -93,6 +93,10 @@ fprintd-verify "$USER"
 - If fingers are already enrolled, fprintd first asks for one tap to check for
   a duplicate.
 - Enrolling a finger again with fprintd replaces its print.
+- Debian, Ubuntu and Mint allow only one fingerprint attempt within 10 s
+  before asking for the password. For more:
+  `sudo packaging/setup-fprintd.sh --pam 3 20` (3 tries within 20 s;
+  [details](docs/packaging.md#pam)).
 
 ## Troubleshooting
 

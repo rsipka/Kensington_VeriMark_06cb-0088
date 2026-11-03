@@ -19,7 +19,7 @@ about 15 seconds.
 | `test-print` | Print encryption (round trip, other device, tampered key id / nonce / ciphertext / tag, credential vs. key file, missing and broken keys), the print-data fallback, and all print formats (format 2, format 1, legacy raw scans) scored with the driver's code, plus loading a print for a print update |
 | `test-capture-builder` | Capture and calibration programs from fixed synthetic calibrations against SHA-256 values (identical for the old full upstream template and the current skeleton), refusal of an incompatible trim, missing calibration, `calibration.bin` round trip, capture mode byte |
 | `test-pairing-key` | The pairing signing key: scalar 1 gives the P-256 base point G (known answer), random scalars, signatures, the derived `hs_key` |
-| `test-setup-fprintd` | `packaging/setup-fprintd.sh` in a sandbox with stand-ins for `systemctl` and `systemd-creds`: every option and its error cases. Needs root or unprivileged user namespaces (`unshare -r`), otherwise skipped |
+| `test-setup-fprintd` | `packaging/setup-fprintd.sh` in a sandbox with stand-ins for `systemctl`, `systemd-creds` and `pam-auth-update`: every option and its error cases. Needs root or unprivileged user namespaces (`unshare -r`), otherwise skipped |
 | `shellcheck` | The shell scripts, if `shellcheck` is installed |
 
 ## Continuous integration

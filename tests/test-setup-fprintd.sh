@@ -7,7 +7,9 @@
 # "encryption" prefixes FAKECRED; decryption fails without it, like a
 # credential that cannot be decrypted). The systemctl stand-in plays the
 # print key helper unit (restart decrypts the credential into run/credstore,
-# stop removes it) and fprintd's ImportCredential=. Runs as root (e.g. in a container)
+# stop removes it) and fprintd's ImportCredential=; the pam-auth-update one
+# rewrites the pam_fprintd line of common-auth from the enabled profiles
+# (FAKE_PAM_LOCAL=1: refuses like for a hand-edited file). Runs as root (e.g. in a container)
 # or as root of a user namespace (unshare -r); prints "skip" if neither works.
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
@@ -67,6 +69,22 @@ case $cmd in
             if [ "$out" = - ]; then tail -c +9 "$in"; else tail -c +9 "$in" > "$out"; fi ;;
 esac
 EOF
+cat > "$W/bin/pam-auth-update" <<EOF
+#!/bin/bash
+echo "pam-auth-update \$*" >> "$W/pam.log"
+[ -n "\${FAKE_PAM_LOCAL:-}" ] && { echo "Local modifications to /etc/pam.d/common-*, not updating." >&2; exit 0; }
+mode=; enable=()
+for a in "\$@"; do
+  case \$a in --enable) mode=e ;; --disable) mode=d ;; --*) mode= ;; *) [ "\$mode" = e ] && enable+=("\$a") ;; esac
+done
+CA="$W/etc/pam.d/common-auth"
+grep -v pam_fprintd "\$CA" > "\$CA.new"
+for p in "\${enable[@]}"; do
+  f="$W/usr/share/pam-configs/\$p"
+  [ -f "\$f" ] && sed -n 's/^[[:space:]]\{1,\}\[[^]]*\][[:space:]]*\(pam_fprintd.*\)/auth\t[success=2 default=ignore]\t\1/p' "\$f" >> "\$CA.new"
+done
+mv "\$CA.new" "\$CA"
+EOF
 chmod +x "$W/bin/"*
 
 # a "library" that contains the driver's symbol name, and one that does not
@@ -81,6 +99,8 @@ sed -e "s|^OVERRIDE_DIR=.*|OVERRIDE_DIR=$W/etc/systemd/system/fprintd.service.d|
     -e "s|^RUN_CREDSTORE=.*|RUN_CREDSTORE=$W/run/credstore|" \
     -e "s|^KEY_FILE=.*|KEY_FILE=$W/var/lib/fprint/validity-0088-pairing/print-key|" \
     -e "s|^PRINT_ROOT=.*|PRINT_ROOT=$W/var/lib/fprint|" \
+    -e "s|^PAM_CONFIGS=.*|PAM_CONFIGS=$W/usr/share/pam-configs|" \
+    -e "s|^COMMON_AUTH=.*|COMMON_AUTH=$W/etc/pam.d/common-auth|" \
     -e "s|\"/proc/\$PID/maps\"|\"$W/proc/\$PID/maps\"|" \
     -e "s|/run/credentials/|$W/run/credentials/|" \
     "$REPO/packaging/setup-fprintd.sh" > "$W/setup.sh"
@@ -200,6 +220,54 @@ check '[ $RC -eq 0 ] && [ ! -e "$C" ] && [ ! -e "$D/validity0088-print-key.conf"
 run --status
 check 'echo "$OUTPUT" | grep -q "UNREADABLE"' "status: encrypted prints without key marked unreadable"
 
+# --- PAM settings -------------------------------------------------------------
+mkdir -p "$W/usr/share/pam-configs" "$W/etc/pam.d"
+printf 'Name: Fingerprint authentication\nAuth:\n\t[success=end default=ignore]\tpam_fprintd.so max-tries=1 timeout=10 # debug\n' \
+    > "$W/usr/share/pam-configs/fprintd"
+printf 'auth\t[success=1 default=ignore]\tpam_unix.so nullok\nauth\trequisite\tpam_deny.so\n' > "$W/etc/pam.d/common-auth"
+printf 'Name: hand-made\nAuth:\n\t[success=end default=ignore]\tpam_fprintd.so max-tries=2\n' \
+    > "$W/usr/share/pam-configs/fprintd-local"
+printf 'Name: Unix\nAuth:\n\t[success=end default=ignore]\tpam_unix.so nullok\n' > "$W/usr/share/pam-configs/unix"
+CA="$W/etc/pam.d/common-auth"
+# read by the conditions passed to check (eval)
+# shellcheck disable=SC2034
+PP="$W/usr/share/pam-configs/validity0088-fprintd"
+run --status
+check 'echo "$OUTPUT" | grep -q "pam: *fingerprint not used"' "status: PAM without fingerprint"
+for bad in "0 20" "21 20" "3 9" "3 301" "x 20"; do
+    # shellcheck disable=SC2086
+    run --pam $bad
+    check '[ $RC -ne 0 ] && [ ! -e "$PP" ]' "pam: '$bad' refused"
+done
+run --pam 3 20
+check '[ $RC -eq 0 ] && grep -q "pam_fprintd.so max-tries=3 timeout=20$" "$PP" &&
+       grep -q "^Conflicts: fprint, fprintd" "$PP" && grep -q "^Default: no" "$PP"' \
+      "pam: profile written"
+check 'tail -n 1 "$W/pam.log" | grep -q -- "--disable fprintd fprintd-local --enable validity0088-fprintd$"' \
+      "pam: all other pam_fprintd profiles disabled, own profile enabled"
+check 'grep -q "pam_fprintd.so max-tries=3 timeout=20" "$CA" && grep -q pam_unix "$CA" &&
+       echo "$OUTPUT" | grep -q "now enabled"' "pam: common-auth updated, fingerprint newly enabled"
+run --status
+check 'echo "$OUTPUT" | grep -q "pam: *fingerprint with max-tries=3 timeout=20 (set by --pam)"' "status: --pam settings shown"
+cp "$CA" "$W/ca.before"
+FAKE_PAM_LOCAL=1 run --pam 5 40
+check '[ $RC -ne 0 ] && echo "$OUTPUT" | grep -q "was not updated" && cmp -s "$CA" "$W/ca.before"' \
+      "pam: hand-edited common-auth reported, not changed"
+echo "auth optional pam_fingwit.so" >> "$CA"
+run --pam 4 30
+check '[ $RC -ne 0 ] && echo "$OUTPUT" | grep -q fingwit' "pam: refused while fingwit is in use"
+sed -i "/pam_fingwit/d" "$CA"
+run --pam 3 20
+run --pam-default
+check '[ $RC -eq 0 ] && [ ! -e "$PP" ] && grep -q "pam_fprintd.so max-tries=1 timeout=10" "$CA" &&
+       tail -n 1 "$W/pam.log" | grep -q -- "--disable validity0088-fprintd --enable fprintd"' \
+      "pam-default: own profile removed, package profile enabled again"
+run --status
+check 'echo "$OUTPUT" | grep -q "pam: *fingerprint with max-tries=1 timeout=10$"' "status: package PAM settings shown"
+run --pam-default
+check '[ $RC -ne 0 ]' "pam-default: refused without an own profile"
+run --pam 2 15
+
 # --- remove -----------------------------------------------------------------
 run --encrypt-prints
 run --encryption-off
@@ -207,6 +275,7 @@ run --remove
 check '[ $RC -eq 0 ] && [ ! -e "$OV" ] && [ ! -e "$D/validity0088-print-key.conf" ] &&
        [ ! -e "$D/validity0088-encryption.conf" ] && [ ! -e "$H" ] && [ ! -e "$PK" ] && [ -e "$C" ]' \
       "remove: drop-ins and helper unit removed, credential kept"
+check '[ -e "$PP" ] && echo "$OUTPUT" | grep -q "kept the PAM settings"' "remove: PAM settings kept and mentioned"
 
 echo "$([ $FAILS -eq 0 ] && echo passed || echo FAILED): $FAILS failure(s)"
 [ $FAILS -eq 0 ]
