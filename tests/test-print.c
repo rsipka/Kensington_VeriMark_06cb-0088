@@ -158,6 +158,19 @@ test_encryption (void)
   id1 = g_variant_get_child_value (enc, 1);
   id2 = g_variant_get_child_value (enc2, 1);
   CHECK (!g_variant_equal (id1, id2), "keys: new prints use the credential key");
+  {
+    /* key id = first 8 bytes of SHA-256("validity-0088 print key" || key);
+     * setup-fprintd.sh computes the same with sha256sum (--status, backups) */
+    g_autoptr(GChecksum) ck = g_checksum_new (G_CHECKSUM_SHA256);
+    guint8 md[32];
+    gsize md_len = sizeof (md), id_len = 0;
+    const guint8 *id = g_variant_get_fixed_array (id2, &id_len, 1);
+
+    g_checksum_update (ck, (const guchar *) "validity-0088 print key", 23);
+    g_checksum_update (ck, k2, 32);
+    g_checksum_get_digest (ck, md, &md_len);
+    CHECK (id_len == 8 && memcmp (id, md, 8) == 0, "keys: key id is SHA-256(label || key)[0..8]");
+  }
   dec = validity_print_decrypt (enc, "dev1", &e);
   CHECK (dec != NULL, "keys: print made with the file key still readable");
   g_clear_pointer (&dec, g_variant_unref);

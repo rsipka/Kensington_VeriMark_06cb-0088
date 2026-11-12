@@ -14,6 +14,7 @@
 #   sudo ./setup-fprintd.sh --drop-file-key
 #   sudo ./setup-fprintd.sh --encryption-off | --encryption-on
 #   sudo ./setup-fprintd.sh --delete-key [--yes]
+#   sudo ./setup-fprintd.sh --backup-key FILE | --restore-key FILE
 #   sudo ./setup-fprintd.sh --pam TRIES TIMEOUT | --pam-default
 #   sudo ./setup-fprintd.sh --status
 #   sudo ./setup-fprintd.sh --remove
@@ -35,6 +36,12 @@
 # (/etc/credstore.encrypted/, decrypted by fprintd itself) is moved.
 # --drop-file-key then deletes the key file once the credential is known to
 # hold the same key. See docs/print-encryption.md.
+#
+# The TPM-sealed credential is lost when the TPM is reset, which some BIOS
+# updates do (firmware TPMs). --backup-key FILE saves the plain 32-byte key
+# to FILE (meant for offline storage: anyone with it can decrypt the prints);
+# --restore-key FILE puts it back as the key file, moving an undecryptable
+# credential aside, so the prints are readable again.
 #
 # --pam (Debian family, pam-auth-update) sets how many fingerprint attempts
 # PAM allows and for how many seconds, for every service that includes
@@ -87,8 +94,10 @@ COMMON_AUTH=/etc/pam.d/common-auth
 [ "$(id -u)" -eq 0 ] || die "must be run as root (try: sudo $0 ...)"
 USAGE="usage: $0 /path/to/libfprint/builddir | --encrypt-prints | --drop-file-key |
        --encryption-off | --encryption-on | --delete-key [--yes] |
+       --backup-key FILE | --restore-key FILE |
        --pam TRIES TIMEOUT | --pam-default | --status | --remove"
 [ $# -eq 1 ] || { [ $# -eq 2 ] && [ "$1" = --delete-key ] && [ "$2" = --yes ]; } \
+    || { [ $# -eq 2 ] && { [ "$1" = --backup-key ] || [ "$1" = --restore-key ]; }; } \
     || { [ $# -eq 3 ] && [ "$1" = --pam ]; } || die "$USAGE"
 
 systemctl cat fprintd.service >/dev/null 2>&1 \
@@ -113,6 +122,11 @@ backup_override () {
 cred_size () {
     systemd-creds decrypt --name="$CRED_NAME" "$1" - 2>/dev/null | wc -c
 }
+
+# The key inside a credential (stdout), and the driver's id of a key
+# (stdin): the first 8 bytes of SHA-256("validity-0088 print key" || key).
+cred_key () { systemd-creds decrypt --name="$CRED_NAME" "$1" - 2>/dev/null; }
+key_id () { { printf '%s' 'validity-0088 print key'; cat; } | sha256sum | cut -c1-16; }
 
 # Prints of this driver stored by fprintd: <root>/<user>/validity-0088/<dev>/<finger>.
 # Prints with fpi-data type (uayayay) are encrypted.
@@ -186,7 +200,7 @@ if [ "$1" = "--status" ]; then
     CRED="$(current_cred)"
     if [ -n "$CRED" ]; then
         if [ "$(cred_size "$CRED")" -eq 32 ]; then
-            say "credential: $CRED (decrypts)"
+            say "credential: $CRED (decrypts, key id $(cred_key "$CRED" | key_id))"
         else
             say "credential: $CRED (CANNOT be decrypted)"
         fi
@@ -202,7 +216,7 @@ if [ "$1" = "--status" ]; then
             say "helper:     $HELPER: key NOT available (see: journalctl -u $HELPER)"
         fi
     fi
-    [ -f "$KEY_FILE" ] && say "key file:   $KEY_FILE" || say "key file:   none"
+    [ -f "$KEY_FILE" ] && say "key file:   $KEY_FILE (key id $(key_id < "$KEY_FILE"))" || say "key file:   none"
     if [ "$ENC" -gt 0 ] && [ -z "$CRED" ] && [ ! -f "$KEY_FILE" ]; then
         say "prints:     $ENC encrypted (UNREADABLE: no key), $PLAIN unencrypted"
     else
@@ -249,6 +263,71 @@ if [ "$1" = "--encryption-on" ]; then
     say "new prints are stored encrypted again"
     [ -n "$(current_cred)" ] || [ -f "$KEY_FILE" ] \
         || say "a key file will be created at the next enrollment (or run --encrypt-prints)"
+    exit 0
+fi
+
+if [ "$1" = "--backup-key" ]; then
+    DEST="$2"
+    [ -e "$DEST" ] && die "$DEST exists; an existing file is never overwritten, choose a new name"
+    [ -d "$(dirname -- "$DEST")" ] || die "directory $(dirname -- "$DEST") not found"
+    CRED="$(current_cred)"
+    if [ -n "$CRED" ] && [ "$(cred_size "$CRED")" -eq 32 ]; then
+        SRC="credential $CRED"
+        (umask 077; cred_key "$CRED" > "$DEST")
+    elif [ -f "$KEY_FILE" ]; then
+        [ -n "$CRED" ] && say "$CRED cannot be decrypted; backing up the key file instead"
+        SRC="key file $KEY_FILE"
+        (umask 077; cat -- "$KEY_FILE" > "$DEST")
+    elif [ -n "$CRED" ]; then
+        die "$CRED cannot be decrypted (TPM reset?) and there is no key file: no key to back up"
+    else
+        die "no print key yet (it is created at the first enrollment)"
+    fi
+    [ "$(stat -c %s -- "$DEST")" -eq 32 ] || { rm -f -- "$DEST"; die "writing $DEST failed"; }
+    sync -- "$DEST" 2>/dev/null || true
+    say "saved the print key from the $SRC to $DEST (key id $(key_id < "$DEST"))"
+    if [ -f "$KEY_FILE" ] && [ "$SRC" != "key file $KEY_FILE" ] && ! cmp -s "$KEY_FILE" "$DEST"; then
+        say "note: $KEY_FILE holds another key (id $(key_id < "$KEY_FILE")); prints made with it need that file"
+    fi
+    say "anyone with this file can decrypt your stored prints: keep it offline"
+    say "(USB stick, password manager), not on this computer. Restore: $0 --restore-key FILE"
+    exit 0
+fi
+
+if [ "$1" = "--restore-key" ]; then
+    SRC="$2"
+    [ -f "$SRC" ] || die "$SRC not found"
+    [ "$(stat -c %s -- "$SRC")" -eq 32 ] || die "$SRC is not a print key backup (must be 32 bytes)"
+    ID="$(key_id < "$SRC")"
+    CRED="$(current_cred)"
+    if [ -n "$CRED" ]; then
+        if [ "$(cred_size "$CRED")" -eq 32 ]; then
+            if cmp -s <(cred_key "$CRED") "$SRC"; then
+                say "the credential $CRED already holds this key (id $ID); nothing to do"
+                exit 0
+            fi
+            die "$CRED holds a different key (id $(cred_key "$CRED" | key_id)) that still works; prints encrypted with it would become unreadable. Back it up with --backup-key and move it away first if you really want to switch"
+        fi
+        BROKEN="$CRED.broken-$(date +%Y%m%d-%H%M%S)"
+        mv -- "$CRED" "$BROKEN"
+        say "moved the undecryptable credential to $BROKEN"
+    fi
+    if [ -f "$KEY_FILE" ]; then
+        cmp -s "$KEY_FILE" "$SRC" \
+            || die "$KEY_FILE holds a different key (id $(key_id < "$KEY_FILE")); move it away first"
+        say "$KEY_FILE already holds this key"
+    else
+        mkdir -p -- "$(dirname -- "$KEY_FILE")"
+        install -m 0600 -- "$SRC" "$KEY_FILE"
+        say "restored the print key (id $ID) to $KEY_FILE"
+    fi
+    restart_fprintd
+    if [ -f "$KEY_DROPIN" ]; then
+        say "prints encrypted with key $ID are readable again. To seal the key with the TPM again:"
+        say "  sudo $0 --encrypt-prints   then, after a successful verify:   sudo $0 --drop-file-key"
+    else
+        say "prints encrypted with key $ID are readable again"
+    fi
     exit 0
 fi
 

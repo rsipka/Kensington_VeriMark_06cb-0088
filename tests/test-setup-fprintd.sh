@@ -199,6 +199,41 @@ rm -f "$LC"
 run --status
 check 'echo "$OUTPUT" | grep -q "key decrypted for fprintd"' "status: helper state shown"
 
+# --- key backup and restore (TPM reset) -------------------------------------
+# shellcheck disable=SC2034
+B="$W/backup.key"
+kid () { { printf '%s' 'validity-0088 print key'; cat "$1"; } | sha256sum | cut -c1-16; }
+tail -c +9 "$C" > "$W/key.expected"
+run --backup-key "$B"
+check '[ $RC -eq 0 ] && cmp -s "$B" "$W/key.expected" && [ "$(stat -c %a "$B")" = 600 ] &&
+       echo "$OUTPUT" | grep -q "key id $(kid "$B")"' "backup-key: key from the credential saved, mode 600, key id shown"
+run --status
+check 'echo "$OUTPUT" | grep -q "decrypts, key id $(kid "$B")"' "status: key id of the credential"
+run --backup-key "$B"
+check '[ $RC -ne 0 ] && echo "$OUTPUT" | grep -q "never overwritten"' "backup-key: existing file not overwritten"
+run --backup-key "$W/nodir/k"
+check '[ $RC -ne 0 ]' "backup-key: missing directory refused"
+printf garbage > "$C"                                   # the TPM was reset
+run --backup-key "$W/b2"
+check '[ $RC -ne 0 ] && [ ! -e "$W/b2" ]' "backup-key: nothing to back up from an undecryptable credential"
+head -c 32 /dev/urandom > "$W/other.key"; printf short > "$W/short.key"
+run --restore-key "$W/short.key"
+check '[ $RC -ne 0 ] && [ "$(cat "$C")" = garbage ]' "restore-key: not a 32-byte file -> refused"
+run --restore-key "$B"
+check '[ $RC -eq 0 ] && [ ! -e "$C" ] && ls "$C".broken-* >/dev/null 2>&1 && cmp -s "$K" "$B" &&
+       [ "$(stat -c %a "$K")" = 600 ] && echo "$OUTPUT" | grep -q -- "--encrypt-prints"' \
+      "restore-key: undecryptable credential moved aside, key file restored"
+run --encrypt-prints
+check '[ $RC -eq 0 ] && [ "$(tail -c +9 "$C" | cmp - "$B" && echo same)" = same ]' \
+      "restore-key + encrypt-prints: restored key sealed again"
+run --restore-key "$B"
+check '[ $RC -eq 0 ] && echo "$OUTPUT" | grep -q "already holds"' "restore-key: same key -> nothing to do"
+run --restore-key "$W/other.key"
+check '[ $RC -ne 0 ] && cmp -s "$K" "$B" && echo "$OUTPUT" | grep -q "different key"' \
+      "restore-key: a working credential with another key is never replaced"
+run --drop-file-key
+rm -f "$C".broken-*
+
 # --- encryption on/off, status, delete-key ----------------------------------
 mkdir -p "$P"
 printf 'xx(uayayay)xx' > "$P/7"; printf 'xx(uayayay)xx' > "$P/8"; printf 'xx(uaay)xx' > "$P/9"

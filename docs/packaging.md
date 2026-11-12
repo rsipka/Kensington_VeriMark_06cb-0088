@@ -108,10 +108,12 @@ Run as root (`sudo`), from a normal terminal — sandboxed shells that set the
 | Command | Effect |
 |---|---|
 | `<builddir>` | Write `fprintd.service.d/override.conf`: bind-mount the build's library directory to `/run/libfprint-validity-0088` and point `LD_LIBRARY_PATH` at it; `RequiresMountsFor=` the build directory. Keeps a `.bak` copy of an existing drop-in, restarts fprintd and checks that it mapped the library from the build. Symlinked paths are resolved. |
-| `--status` | Library in use, encryption on/off, key source, number of encrypted and unencrypted prints of this driver |
+| `--status` | Library in use, encryption on/off, key source and key ids, helper state, number of encrypted and unencrypted prints of this driver, PAM fingerprint settings |
 | `--encrypt-prints` | Store the print key as systemd credential `/etc/validity0088/print-key.cred` (host+tpm2 when the TPM is usable, else host; no PCR binding), importing an existing `print-key` file; helper unit `validity0088-print-key.service` decrypts it into `/run/credstore`, drop-in `validity0088-print-key.conf` makes fprintd pull in the helper and `ImportCredential=` the key. Moves a credential from the earlier location `/etc/credstore.encrypted/` |
 | `--drop-file-key` | Delete the `print-key` file once the credential holds the same key |
 | `--encryption-off` / `--encryption-on` | Drop-in `validity0088-encryption.conf` with `VALIDITY0088_PRINT_ENCRYPTION=0` / remove it; encrypted prints stay readable while the key exists |
+| `--backup-key FILE` | Save the plain print key to FILE (never overwrites; for offline storage) so prints survive a TPM reset, e.g. by a BIOS update; see [print-encryption.md](print-encryption.md#key-backup) |
+| `--restore-key FILE` | Put a backup back as the key file; an undecryptable credential is moved aside, a working one with another key is never replaced |
 | `--delete-key [--yes]` | Delete credential, key file, helper unit and key drop-in after confirmation; encrypted prints become unreadable |
 | `--pam TRIES TIMEOUT` | Debian family: fingerprint attempts and seconds PAM allows before the password (see [PAM](#pam)) |
 | `--pam-default` | Back to the distribution's PAM fingerprint settings |

@@ -182,8 +182,14 @@ Why these choices:
   that handle; it only adds, never replaces) — and keeps the sealed result
   in the credential file. It never clears the TPM, changes its owner
   password or touches BitLocker data. A dual-boot Windows is not affected.
-  Only clearing the TPM (firmware setup, `tpm.msc`, `tpm2_clear`) would make
-  the credential undecryptable.
+  Only a TPM reset makes the credential undecryptable: clearing it
+  (firmware setup, `tpm.msc`, `tpm2_clear`) — or a **BIOS update**, which
+  resets a firmware TPM (AMD fTPM, Intel PTT) on many machines. That
+  happened on the test machine (2026-11-12): from the first boot after the
+  update, `systemd-creds` failed with TPM error `0x1df` ("State not
+  recoverable"), and BitLocker on such a machine asks for its recovery key
+  too. **Keep a backup of the key** (below) or expect to enroll again after
+  BIOS updates.
 
 What it does not protect against: an administrator of another OS on the same
 machine who can read the Linux partition (host key) and use the TPM. PCR
@@ -196,7 +202,7 @@ binding would stop that, at the price above.
 | Print is format 2, its key is not available | verify/identify: `FP_DEVICE_ERROR_DATA_INVALID`, "print encrypted with key …, key not available; restore the key or enroll again". Identify skips that print and continues with the others. |
 | Key present, GCM tag check fails | same error, "print damaged or encrypted with another key". |
 | Credential configured but missing | the helper unit fails, fprintd starts without the key (tested); the driver falls back to the key file, encrypted prints without a matching key give the error above. |
-| Credential configured but undecryptable (TPM cleared, file damaged) | the same: only the helper unit fails (tested), fprintd and other readers keep working, encrypted prints give the error above. `--status` shows "key NOT available"; see *Recovery*. |
+| Credential configured but undecryptable (TPM reset by a BIOS update or cleared, file damaged) | the same: only the helper unit fails (tested), fprintd and other readers keep working, encrypted prints give the error above. `--status` shows "key NOT available"; see *Recovery*. |
 | No key anywhere at enroll | `print-key` file created, print encrypted. |
 | No key, and the file cannot be created (storage not writable, disk full) | print stored **unencrypted** (format 1) with a warning; enrolling the finger again later encrypts it. |
 | `print-key` exists but is not a valid key (wrong size, unreadable) | enroll fails; the file is never replaced, so prints made with the real key are not lost. |
@@ -225,14 +231,48 @@ before it replaced that setup: valid credential → the consumer unit got the
 or corrupt credential → the helper failed, the consumer unit still started,
 without the key.
 
+## Key backup
+
+The TPM-sealed credential cannot be copied to a new TPM, and a TPM reset
+loses it. A backup of the plain key keeps the prints usable:
+
+```bash
+sudo packaging/setup-fprintd.sh --backup-key /media/usb/verimark-print-key.bin
+```
+
+writes the 32-byte key (from the credential, else from the key file), mode
+600, prints its key id, and never overwrites an existing file. The key id is
+what the driver reports for a print whose key is missing ("encrypted with
+key 4d74…"), and `--status` shows the ids of the credential and the key
+file, so a backup can be matched to the prints. **Anyone with the backup can
+decrypt the prints**: keep it offline (USB stick, password manager entry),
+never on the same disk. The key does not change on its own; one backup after
+`--encrypt-prints` is enough until `--delete-key` or a new key.
+
+`--restore-key FILE` puts it back: an undecryptable credential is moved to
+`<credential>.broken-<date>`, the key becomes the `print-key` file again, and
+fprintd is restarted, so the prints verify again. Then `--encrypt-prints`
+seals it with the (reset) TPM and `--drop-file-key` removes the file. A
+credential that still decrypts with another key is never replaced.
+
 ## Recovery
 
-When the credential can no longer be decrypted (TPM cleared in the firmware
-setup, by Windows "Clear TPM" or by some firmware updates), fprintd still
+When the credential can no longer be decrypted (TPM reset by a BIOS update,
+cleared in the firmware setup or by Windows "Clear TPM"), fprintd still
 starts, but prints encrypted with that key no longer verify ("key not
 available"), `--status` reports the credential as "CANNOT be decrypted" and
-`journalctl -u validity0088-print-key` shows the failed decryption. Those
-prints are lost. To recover:
+`journalctl -u validity0088-print-key` shows the failed decryption.
+
+**With a key backup:**
+
+```bash
+sudo packaging/setup-fprintd.sh --restore-key /media/usb/verimark-print-key.bin
+fprintd-verify "$USER"
+sudo packaging/setup-fprintd.sh --encrypt-prints
+sudo packaging/setup-fprintd.sh --drop-file-key
+```
+
+**Without a backup** the prints encrypted with that key are lost:
 
 ```bash
 sudo mv /etc/validity0088/print-key.cred /etc/validity0088/print-key.cred.broken
@@ -284,7 +324,8 @@ Taken when the design was accepted (2026-10-20):
    or finger: renaming an account must not break its prints, and swapping
    templates between users needs root anyway.
 3. **No PCR binding.** The credential is bound to this TPM and this disk's
-   host key, not to the boot state, so firmware, Secure Boot or Windows
-   updates do not lock the prints. Accepted trade-off: another OS on the
+   host key, not to the boot state, so Secure Boot or Windows updates and
+   firmware updates that keep the TPM do not lock the prints (a BIOS update
+   that resets a firmware TPM still does: see *Key backup*). Accepted trade-off: another OS on the
    same machine with access to the Linux partition and the TPM could
    decrypt the key.

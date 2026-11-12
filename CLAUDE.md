@@ -252,6 +252,11 @@ depend on a device flag (`+0x4c`) not readable on Linux; current choice works.
    when the credential could not be decrypted; tested with transient units,
    then on the real system: migration from `/etc/credstore.encrypted/`,
    helper active, `fprintd-verify` matched an existing encrypted print.
+   2026-11-12: a BIOS update reset the firmware TPM on the test machine;
+   the credential failed to unseal (TPM error `0x1df`), fprintd kept
+   running (helper unit), the encrypted print was lost (no backup). Added
+   `--backup-key FILE` / `--restore-key FILE` (plain 32-byte key, key id =
+   SHA-256("validity-0088 print key" || key)[0..8], also in `--status`).
 4. Optional k-of-n rule (require ≥2 templates above a lower threshold).
    Probably unnecessary: wrong fingers never exceeded 7 (item 1), so there
    is no false-accept problem to fix, and k-of-n would raise false rejects.
