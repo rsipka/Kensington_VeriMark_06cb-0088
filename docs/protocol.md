@@ -99,6 +99,15 @@ the tail of the preparation is repeated.
    pixel. With status `0x0007` the reply is only 18 bytes: no image, the
    driver asks for the tap again.
 
+**A capture left armed.** Once the capture program is sent, the sensor runs
+it until `0x51` reads the image (a `0x0007` "no image" reply ends it too).
+If the operation is cancelled in between (timeout, cancel, nobody touched the
+sensor), the program keeps running, and the next session's capture-program
+upload fails with a USB STALL ("endpoint stalled or request not
+supported"). The driver tracks this and resets the device over USB when it
+is closed with a capture still armed (contributed upstream, visorcraft pull
+request 9: 4 of 8 cancel-and-retry cycles failed before, none after).
+
 The pixel stream is **column-major**: 56 columns of 144 samples. The driver
 transposes it into a 56 × 144 row-major image (about 7 × 3 mm of finger).
 

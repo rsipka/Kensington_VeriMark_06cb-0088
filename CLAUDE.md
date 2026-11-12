@@ -115,6 +115,10 @@ key fails the enroll) — all mode 600. Works without systemd.
   (56 columns × 144); the driver transposes to a 56×144 image.
 - The sensor does no on-chip matching (opcodes `5e`/`69` → status `0x0401`).
 - `51` returning 18 B with status `0x0007` = no image (tap too short/light).
+- A capture program not ended by `51` (operation cancelled while waiting for
+  a finger) keeps running; the next capture-program upload STALLs. The
+  driver resets the device over USB in `validity_close()` when
+  `capture_armed` is still set (from upstream PR 9).
 - `get_fw_info(fwext)` returns `0x04af` at every open; harmless, logged at debug
   level only (other non-zero values still warn).
 
