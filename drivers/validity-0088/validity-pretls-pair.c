@@ -299,9 +299,11 @@ validity_pairing_run_pretls_fresh_pair_ceremony (FpDevice *dev, GError **error)
   EVP_PKEY *fresh_pkey = NULL;
   EVP_PKEY *hs_pkey = NULL;
   gboolean ok = FALSE;
-  /* Declared (NULL) up front: the `goto out` of steps 1-9 must not jump
-   * past a g_autofree declaration, or its cleanup frees an uninitialised
-   * stack value ("free(): invalid pointer", fprintd aborts). */
+  /* Declared (and NULL-initialised) up front: the early `goto out` paths
+   * before step 10 must not jump past g_autofree declarations, or their
+   * cleanup frees uninitialised stack values ("free(): invalid pointer")
+   * and the GError from the failed step is lost. g_free(NULL) is a no-op,
+   * so those paths still return the error they set. */
   g_autofree gchar *dir = NULL;
   g_autofree gchar *cert_path = NULL;
   g_autofree gchar *key_path = NULL;
